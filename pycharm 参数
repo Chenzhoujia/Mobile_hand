@@ -1,0 +1,14 @@
+gen_frozen_pb
+/home/chen/Documents/Mobile_hand/gen_frozen_pb.py
+--checkpoint=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_192x192_..-experiments-mv2_hourglass/model-768500 --output_graph=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_192x192_..-experiments-mv2_hourglass/model-768500.pb --size=192 --model=mv2_hourglass
+LD_LIBRARY_PATH /usr/local/cuda-9.0/lib64
+
+
+train
+/home/chen/Documents/Mobile_hand/src/train.py
+../experiments/mv2_hourglass.cfg
+LD_LIBRARY_PATH /usr/local/cuda-9.0/lib64
+
+RHD
+/home/chen/Documents/Mobile_hand/dataset_interface/RHD.py
+LD_LIBRARY_PATH /usr/local/cuda-9.0/lib64
