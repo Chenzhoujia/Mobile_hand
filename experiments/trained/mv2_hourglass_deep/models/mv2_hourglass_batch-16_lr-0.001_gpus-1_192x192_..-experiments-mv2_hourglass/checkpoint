@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_192x192_..-experiments-mv2_hourglass/model-0"
+all_model_checkpoint_paths: "/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_192x192_..-experiments-mv2_hourglass/model-0"
