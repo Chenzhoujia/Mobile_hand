@@ -49,8 +49,20 @@ class RHD(BaseDataset):
         self.get_batch_data = self.iterator.get_next()
 
     @staticmethod
-    def visualize_data(image, xyz, uv, uv_vis, k, num_px_left_hand, num_px_right_hand, scoremap):
+    def visualize_data(image, xyz, uv, uv_vis, k, num_px_left_hand, num_px_right_hand, scoremap,
+                       image_crop_tip, crop_size_best,  image_nohand):
         # get info from annotation dictionary
+
+        image = (image + 0.5) * 255
+        image = image.astype(np.int16)
+
+        image_crop_tip = (image_crop_tip + 0.5) * 255
+        image_crop_tip = image_crop_tip.astype(np.int16)
+
+        image_nohand = (image_nohand + 0.5) * 255
+        image_nohand = image_nohand.astype(np.int16)
+
+
         kp_coord_uv = uv[:, :2]  # u, v coordinates of 42 hand keypoints, pixel
         kp_visible =(uv_vis == 1)  # visibility of the keypoints, boolean
         kp_coord_xyz = xyz  # x, y, z coordinates of the keypoints, in meters
@@ -62,16 +74,19 @@ class RHD(BaseDataset):
 
         # Visualize data
         fig = plt.figure(1)
-        ax1 = fig.add_subplot('221')
+        ax1 = fig.add_subplot('231')
         ax1.set_title("left_hand:"+str(num_px_left_hand)+"right_hand:"+str(num_px_right_hand))
-        ax2 = fig.add_subplot('222')
-        ax3 = fig.add_subplot('223')
-        ax4 = fig.add_subplot('224', projection='3d')
+        ax2 = fig.add_subplot('232')
+        ax3 = fig.add_subplot('233')
+        ax4 = fig.add_subplot('234', projection='3d')
+        ax5 = fig.add_subplot('235')
 
+        ax5.imshow(image_crop_tip)
+        ax5.set_title(str(crop_size_best))
+        ax6 = fig.add_subplot('236')
+        ax6.imshow(image_nohand)
         ax1.imshow(image)
         ax1.scatter(kp_coord_uv[kp_visible, 0], kp_coord_uv[kp_visible, 1], marker='o', color='blue', s=5)
-        image = (image + 0.5) * 255
-        image = image.astype(np.int16)
         ax2.scatter(kp_coord_uv_proj[:, 0], kp_coord_uv_proj[:, 1], marker='x', color='red', s=5)
         ax2.imshow(image)
 
@@ -91,13 +106,14 @@ class RHD(BaseDataset):
         image_size = (320, 320)
         image_string = tf.read_file(imagefilename)
         image_decoded = tf.image.decode_png(image_string)
-        image_decoded = tf.image.resize_images(image_decoded, [image_size[0],image_size[0]],method=0)
+        image_decoded.set_shape([image_size[0],image_size[0],3])
         image = tf.cast(image_decoded, tf.float32)
         image = image / 255.0 - 0.5
 
         mask_string = tf.read_file(maskfilename)
         mask_decoded = tf.image.decode_png(mask_string)
         hand_parts_mask = tf.cast(mask_decoded, tf.int32)
+        hand_parts_mask.set_shape([image_size[0],image_size[0],1])
 
         keypoint_vis = tf.cast(keypoint_uv[:, 2], tf.bool)
         keypoint_uv = keypoint_uv[:, :2]
@@ -108,7 +124,7 @@ class RHD(BaseDataset):
         # general parameters
         batch_size = 4
 
-        coord_uv_noise = True
+        coord_uv_noise = False
         coord_uv_noise_sigma = 1.0  # std dev in px of noise on the uv coordinates
         crop_center_noise = True
         crop_center_noise_sigma = 20.0  # std dev in px: this moves what is in the "center", but the crop always contains all keypoints
@@ -116,7 +132,7 @@ class RHD(BaseDataset):
         crop_offset_noise_sigma = 10.0  # translates the crop after size calculation (this can move keypoints outside)
         crop_scale_noise_ = False
         crop_size = 192
-        hand_crop = True
+        hand_crop = False
         hue_aug = False
         hue_aug_max = 0.1
 
@@ -308,17 +324,83 @@ class RHD(BaseDataset):
                                      noise_shape=[1, 1, 21])
             scoremap *= scoremap_dropout_prob
 
+        image_crop_tip, crop_size_best,image_nohand = RHD._parse_function_furtner(image, keypoint_uv21, hand_parts_mask)
 
-        return image_crop, keypoint_xyz21, keypoint_uv21, scoremap, keypoint_vis21, k, num_px_left_hand, num_px_right_hand
-"""
+        return image, keypoint_xyz21, keypoint_uv21, scoremap, keypoint_vis21, k, num_px_left_hand, num_px_right_hand,\
+               image_crop_tip, crop_size_best, image_nohand
+
+
+    """
+    Keypoints available:
+    0: left wrist, 1-4: left thumb [tip to palm], 5-8: left index, ..., 17-20: left pinky,
+    """
+    @staticmethod
+    def _parse_function_furtner(image, keypoint_uv21, hand_parts_mask):
+
+        crop_size = 32
+
+        #（1）计算切割大小
+        #舍弃3D坐标，因为我们只需要xy轴的位移百分比和z轴尺度的变化百分比，网络的输入与相机矩阵没有关系，网络的输出也只是像素图像上的
+        #使用编号为5的节点 crop，按照56关节之间的长度的两倍计算crop大小（大概(10~40)个px），以指尖为中心
+        crop_center = keypoint_uv21[5, ::-1]
+        crop_center_wing = keypoint_uv21[6, ::-1]
+            # catch problem, when no valid kp available (happens almost never)
+        crop_center = tf.cond(tf.reduce_all(tf.is_finite(crop_center)), lambda: crop_center,
+                              lambda: tf.constant([0.0, 0.0]))
+        crop_center.set_shape([2, ])
+        crop_center_wing = tf.cond(tf.reduce_all(tf.is_finite(crop_center_wing)), lambda: crop_center_wing,
+                              lambda: tf.constant([0.0, 0.0]))
+        crop_center_wing.set_shape([2, ])
+        crop_size_best = tf.abs(2 * (crop_center - crop_center_wing))
+        crop_size_best = tf.reduce_max(crop_size_best)
+        crop_size_best = tf.minimum(tf.maximum(crop_size_best, 10.0), 50.0)
+            # catch problem, when no valid kp available
+        crop_size_best = tf.cond(tf.reduce_all(tf.is_finite(crop_size_best)), lambda: crop_size_best,
+                                 lambda: tf.constant(20.0))
+        crop_size_best.set_shape([])
+
+        #（2）判断关节点是否被遮挡，不确定这是否有意义，只能用作选择model的依据。其次必须借助maskh和visable
+
+        #（3）寻找no hand图片
+
+        one_map, zero_map = tf.ones_like(hand_parts_mask), tf.zeros_like(hand_parts_mask)
+        no_hand_mask = tf.less(hand_parts_mask, one_map*2)
+        no_hand_mask = tf.stack([no_hand_mask[:, :, 0], no_hand_mask[:, :, 0], no_hand_mask[:, :, 0]], 2)
+
+        rgb_mean = tf.reduce_mean(image, axis=0)
+        rgb_mean = tf.reduce_mean(rgb_mean, axis=0)
+
+        back_image = tf.ones_like(image)
+        back_image = tf.stack([back_image[:, :, 0]*rgb_mean[0], back_image[:, :, 1]*rgb_mean[1], back_image[:, :, 2]*rgb_mean[2]], 2)
+        image_nohand = tf.where(no_hand_mask, image, back_image)
+        image_nohand = tf.random_crop(image_nohand, [crop_size, crop_size, 3])
+
+        # （4）剪切
+        scale = tf.cast(crop_size, tf.float32) / crop_size_best
+        img_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size, scale)
+        image_crop = tf.stack([img_crop[0, :, :, 0], img_crop[0, :, :, 1], img_crop[0, :, :, 2]], 2)
+        hand_parts_mask_crop = crop_image_from_xy(tf.expand_dims(hand_parts_mask, 0), crop_center, crop_size, scale)
+        hand_parts_mask_crop = tf.stack([hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0]], 2)
+
+        #（5）根据hand_parts_mask_crop， image_nohand， image_crop， 填充不变背景图片
+        no_hand_mask = tf.ones_like(hand_parts_mask_crop)
+        no_hand_mask = tf.less(hand_parts_mask_crop, no_hand_mask * 2) #小于2的背景和人体（no hand）像素为true
+        image_crop = tf.where(no_hand_mask, image_nohand, image_crop)
+
+        #随机生成6个百分比，对原始大图image，hand_parts_mask进行变换，重新执行（4）（5）
+        #noise = tf.truncated_normal([2], mean=0.0, stddev=crop_center_noise_sigma)
+        #
+
+        return image_crop, crop_size_best, image_nohand
+
+
 dataset_RHD = RHD()
 with tf.Session() as sess:
 
     for i in tqdm(range(dataset_RHD.example_num)):
-        image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand\
+        image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
+        image_crop_tip, crop_size_best, image_nohand  \
             = sess.run(dataset_RHD.get_batch_data)
-        #print(i)
-        #print(dataset_RHD.dataset.output_shapes)
-        #print(dataset_RHD.dataset.output_types)
-        RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0])
-"""
+
+        RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+                           image_crop_tip[0], crop_size_best[0], image_nohand[0])
