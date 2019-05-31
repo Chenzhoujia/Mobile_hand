@@ -190,7 +190,7 @@ def main(argv=None):
             checkpoint_path = os.path.join(params['modelpath'], training_name)
 
             if checkpoint_path:
-                saver.restore(sess, checkpoint_path+'/model-0')
+                saver.restore(sess, checkpoint_path+'/model-12500')
                 print("restore from " + checkpoint_path)
 
             summary_writer = tf.summary.FileWriter(os.path.join(params['logpath'], training_name), sess.graph)
@@ -213,30 +213,31 @@ def main(argv=None):
                     valid_input_image2 = valid_input_image2.astype(np.int16)
 
                     fig = plt.figure(1)
+                    plt.clf()
                     ax1 = fig.add_subplot('221')
                     ax1.imshow(valid_input_image1[0, :, :, :])
                     ax2 = fig.add_subplot('222')
                     ax2.set_title("loss:" + str(valid_loss_value))
                     ax2.imshow(valid_input_image2[0, :, :, :])
                     ax3 = fig.add_subplot('223')
-                    ax3.plot([0.25, 0.25], [0, valid_hand_motion[0, 0]], label= "label", color='red')
-                    ax3.plot([0.5, 0.5], [0, ur_v[0]], label="predict", color='blue')
-                    ax4 = fig.add_subplot('224', projection='3d')
-                    ax4.plot([0, valid_hand_motion[0, 1]], [0, valid_hand_motion[0, 2]], [0, valid_hand_motion[0, 3]],
-                             label= "label", color='red')
-                    ax4.plot([0, ux_v[0]], [0, uy_v[0]], [0, uz_v[0]],
-                             label="predict", color='blue')
-                    ax4.view_init(azim=-90.0, elev=-90.0)  # aligns the 3d coord with the camera view
+                    ax3.plot([0.1, 0.1], [0, valid_hand_motion[0, 0]], label= "label", color='red')
+                    ax3.plot([0.2, 0.2], [0, ur_v[0]], label="predict", color='blue')
+                    ax3.plot([0.6, 0.6], [0, valid_hand_motion[0, 3]], label= "label", color='red')
+                    ax3.plot([0.7, 0.7], [0, uz_v[0]], label="predict", color='blue')
+                    ax4 = fig.add_subplot('224')
+                    ax4.plot([0, valid_hand_motion[0, 1]], [0, valid_hand_motion[0, 2]], label= "label", color='red')
+                    ax4.plot([0, ux_v[0]], [0, uy_v[0]], label="predict", color='blue')
                     ax4.set_xlabel('x')
+                    ax4.set_ylabel('y')
                     ax4.set_xlim((-1, 1))
                     ax4.set_ylim((-1, 1))
-                    ax3.set_xlim((-1, 1))
+                    ax3.set_xlim((0, 1))
                     ax3.set_ylim((-1, 1))
-                    ax4.set_zlim((-1, 1))
-                    ax4.set_ylabel('y')
-                    ax4.set_zlabel('z')
+                    ax3.grid(True)
+                    ax4.grid(True)
 
-                    plt.savefig(os.path.join(params['logpath'], training_name)+"/no"+str(step).zfill(10)+".png")
+
+                    plt.savefig(os.path.join(params['logpath'], training_name)+"/"+str(step).zfill(10)+".png")
 
 
                 # save model
