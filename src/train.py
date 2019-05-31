@@ -13,23 +13,63 @@ from dataset_interface.RHD import RHD
 from dataset_interface.dataset_prepare import CocoPose
 from src.networks import get_network
 import matplotlib.pyplot as plt
+from src.general import NetworkOps
+from src import  network_mv2_hourglass
 from mpl_toolkits.mplot3d import Axes3D
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+ops = NetworkOps
 
-
-def get_loss_and_output(model, batchsize, input_image, input_heat, reuse_variables=None):
+def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion, reuse_variables=None):
     losses = []
 
+    # 叠加在batch上重用特征提取网络
+    input_image12 = tf.concat([input_image1, input_image2], 0)
+    input_image12.set_shape([batchsize*2, 32, 32, 3])
     with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
-        _, pred_heatmaps_all = get_network(model, input_image, True)
+        network_mv2_hourglass.N_KPOINTS = 8
+        _, pred_heatmaps_all12 = get_network(model, input_image12, True)
+    diffmap = []
+    for batch_i in range(len(pred_heatmaps_all12)):
+        diffmap.append(pred_heatmaps_all12[batch_i][0:batchsize]-pred_heatmaps_all12[batch_i][batchsize:batchsize*2])
 
-    for idx, pred_heat in enumerate(pred_heatmaps_all):
-        loss_l2 = tf.nn.l2_loss(tf.concat(pred_heat, axis=0) - input_heat, name='loss_heatmap_stage%d' % idx)
-        losses.append(loss_l2)
+    #diffmap_t 将4个阶段的输出，在通道数上整合
+    for batch_i in range(len(diffmap)):
+        if batch_i==0:
+            diffmap_t = diffmap[batch_i]
+        else:
+            diffmap_t = tf.concat([diffmap[batch_i], diffmap_t], axis=3)
+
+    with tf.variable_scope("diff", reuse=reuse_variables):
+        network_mv2_hourglass.N_KPOINTS = 1
+        _, pred_diffmap_all = get_network(model, diffmap_t, True)
+    losses = []
+    for idx, pred_heat in enumerate(pred_diffmap_all):
+        # flatten
+        s = pred_heat.get_shape().as_list()
+        pred_heat = tf.reshape(pred_heat, [s[0], -1])  # this is Bx16*16*1
+        #x = tf.concat([x, hand_side], 1)
+
+        # pred_heat --> 3 params
+        out_chan_list = [32, 16, 8]
+        for i, out_chan in enumerate(out_chan_list):
+            pred_heat = ops.fully_connected_relu(pred_heat, 'fc_vp_%d_%d' %(idx,i), out_chan=out_chan, trainable=True)
+            evaluation = tf.placeholder_with_default(True, shape=())
+            pred_heat = ops.dropout(pred_heat, 0.95, evaluation)
+
+        ux = ops.fully_connected(pred_heat, 'fc_vp_ux_%d' % idx, out_chan=1, trainable=True)
+        uy = ops.fully_connected(pred_heat, 'fc_vp_uy_%d' % idx, out_chan=1, trainable=True)
+        uz = ops.fully_connected(pred_heat, 'fc_vp_uz_%d' % idx, out_chan=1, trainable=True)
+        ur = ops.fully_connected(pred_heat, 'fc_vp_ur_%d' % idx, out_chan=1, trainable=True)
+
+        loss_l2r = tf.nn.l2_loss(hand_motion[:, 0] - ur[:, 0], name='lossr_heatmap_stage%d' % idx)
+        loss_l2x = tf.nn.l2_loss(hand_motion[:, 1] - ux[:, 0], name='lossx_heatmap_stage%d' % idx)
+        loss_l2y = tf.nn.l2_loss(hand_motion[:, 2] - uy[:, 0], name='lossy_heatmap_stage%d' % idx)
+        loss_l2z = tf.nn.l2_loss(hand_motion[:, 3] - uz[:, 0], name='lossz_heatmap_stage%d' % idx)
+        losses.append(loss_l2r+loss_l2x+loss_l2y+loss_l2z)
 
     total_loss = tf.reduce_sum(losses) / batchsize
-    total_loss_ll_heat = tf.reduce_sum(loss_l2) / batchsize
-    return total_loss, total_loss_ll_heat, pred_heat
+    total_loss_ll_heat = losses[-1] / batchsize
+    return total_loss, total_loss_ll_heat, ur, ux, uy, uz
 
 
 def average_gradients(tower_grads):
@@ -90,7 +130,7 @@ def main(argv=None):
     )
 
     with tf.Graph().as_default(), tf.device("/cpu:0"):
-        dataset_RHD = RHD()
+        dataset_RHD = RHD(batchnum=params['batchsize'])
 
         global_step = tf.Variable(0, trainable=False)
         learning_rate = tf.train.exponential_decay(float(params['lr']), global_step,
@@ -105,11 +145,12 @@ def main(argv=None):
                 with tf.name_scope("GPU_%d" % i):
                     #input_image, keypoint_xyz, keypoint_uv, input_heat, keypoint_vis, k, num_px_left_hand, num_px_right_hand \
                     batch_data_all = dataset_RHD.get_batch_data
-                    input_image = batch_data_all[0]
-                    input_heat = batch_data_all[3]
+                    input_image1 = batch_data_all[8]
+                    input_image2 = batch_data_all[10]
+                    hand_motion = batch_data_all[9]
 
-                    loss, last_heat_loss, pred_heat = get_loss_and_output(params['model'], params['batchsize'],
-                                                                          input_image, input_heat, reuse_variable)
+                    loss, last_heat_loss, ur, ux, uy, uz = get_loss_and_output(params['model'], params['batchsize'],
+                                                                          input_image1, input_image2, hand_motion, reuse_variable)
                     reuse_variable = True
                     grads = opt.compute_gradients(loss)
                     tower_grads.append(grads)
@@ -149,7 +190,7 @@ def main(argv=None):
             checkpoint_path = os.path.join(params['modelpath'], training_name)
 
             if checkpoint_path:
-                saver.restore(sess, checkpoint_path+'/model-768500')
+                saver.restore(sess, checkpoint_path+'/model-0')
                 print("restore from " + checkpoint_path)
 
             summary_writer = tf.summary.FileWriter(os.path.join(params['logpath'], training_name), sess.graph)
@@ -162,48 +203,38 @@ def main(argv=None):
                     summary_ = sess.run(summary_merge_op)
                     summary_writer.add_summary(summary_, step)
                     """
-                    valid_loss_value, valid_lh_loss, valid_in_image, valid_in_heat, valid_p_heat = sess.run(
-                        [loss, last_heat_loss, input_image, input_heat, pred_heat])
+                    valid_loss_value, valid_lh_loss, valid_input_image1, valid_input_image2, valid_hand_motion , ur_v, ux_v, uy_v, uz_v= sess.run(
+                        [loss, last_heat_loss, input_image1, input_image2, hand_motion,  ur, ux, uy, uz])
+
+                    valid_input_image1 = (valid_input_image1 + 0.5) * 255
+                    valid_input_image1 = valid_input_image1.astype(np.int16)
+
+                    valid_input_image2 = (valid_input_image2 + 0.5) * 255
+                    valid_input_image2 = valid_input_image2.astype(np.int16)
 
                     fig = plt.figure(1)
-                    ax1 = fig.add_subplot('331')
-                    ax2 = fig.add_subplot('332')
-                    ax3 = fig.add_subplot('333')
+                    ax1 = fig.add_subplot('221')
+                    ax1.imshow(valid_input_image1[0, :, :, :])
+                    ax2 = fig.add_subplot('222')
                     ax2.set_title("loss:" + str(valid_loss_value))
-                    ax4 = fig.add_subplot('334')
-                    ax3.set_title("loss:" + str(valid_lh_loss))
-                    ax5 = fig.add_subplot('335')
-                    ax6 = fig.add_subplot('336')
-                    ax7 = fig.add_subplot('337')
-                    ax8 = fig.add_subplot('338')
-                    ax9 = fig.add_subplot('339')
-
-                    image = (valid_in_image + 0.5) * 255
-                    image = image.astype(np.int16)
-                    ax1.imshow(image[0,:,:,:])
-                    valid_in_heat = valid_in_heat[0,:,:,:]
-                    valid_p_heat = valid_p_heat[0,:,:,:]
-                    valid_in_heat_a = np.sum(valid_in_heat,-1)
-                    valid_p_heat_a = np.sum(valid_p_heat, -1)
-                    ax2.imshow(valid_in_heat_a)
-                    ax3.imshow(valid_p_heat_a)
-
-                    ax4.imshow(valid_in_heat[:,:,0])
-                    ax7.imshow(valid_p_heat[:, :, 0])
-                    ax4.set_title("plam")
-                    ax7.set_title("plam")
-
-                    ax5.imshow(valid_in_heat[:,:,1])
-                    ax8.imshow(valid_p_heat[:, :, 1])
-                    ax5.set_title("thum")
-                    ax8.set_title("thum")
-
-                    ax6.imshow(valid_in_heat[:,:,5])
-                    ax9.imshow(valid_p_heat[:, :, 5])
-                    ax9.set_title("index")
-                    ax6.set_title("index")
-
-
+                    ax2.imshow(valid_input_image2[0, :, :, :])
+                    ax3 = fig.add_subplot('223')
+                    ax3.plot([0.25, 0.25], [0, valid_hand_motion[0, 0]], label= "label", color='red')
+                    ax3.plot([0.5, 0.5], [0, ur_v[0]], label="predict", color='blue')
+                    ax4 = fig.add_subplot('224', projection='3d')
+                    ax4.plot([0, valid_hand_motion[0, 1]], [0, valid_hand_motion[0, 2]], [0, valid_hand_motion[0, 3]],
+                             label= "label", color='red')
+                    ax4.plot([0, ux_v[0]], [0, uy_v[0]], [0, uz_v[0]],
+                             label="predict", color='blue')
+                    ax4.view_init(azim=-90.0, elev=-90.0)  # aligns the 3d coord with the camera view
+                    ax4.set_xlabel('x')
+                    ax4.set_xlim((-1, 1))
+                    ax4.set_ylim((-1, 1))
+                    ax3.set_xlim((-1, 1))
+                    ax3.set_ylim((-1, 1))
+                    ax4.set_zlim((-1, 1))
+                    ax4.set_ylabel('y')
+                    ax4.set_zlabel('z')
 
                     plt.savefig(os.path.join(params['logpath'], training_name)+"/no"+str(step).zfill(10)+".png")
 

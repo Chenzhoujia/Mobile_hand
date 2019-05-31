@@ -82,7 +82,7 @@ class RHD(BaseDataset):
         ax5 = fig.add_subplot('235')
 
         ax5.imshow(image_crop_tip)
-        ax5.set_title(str(crop_size_best))
+        ax5.set_title(str(crop_size_best[0]))
         ax6 = fig.add_subplot('236')
         ax6.imshow(image_nohand)
         ax1.imshow(image)
@@ -92,9 +92,12 @@ class RHD(BaseDataset):
 
 
         ax3.imshow(scoremap)
-        ax4.scatter(kp_coord_xyz[:, 0], kp_coord_xyz[:, 1], kp_coord_xyz[:, 2])
+        ax4.plot([0,crop_size_best[1]], [0,crop_size_best[2]], [0,crop_size_best[3]])
         ax4.view_init(azim=-90.0, elev=-90.0)  # aligns the 3d coord with the camera view
         ax4.set_xlabel('x')
+        ax4.set_xlim((-1, 1))
+        ax4.set_ylim((-1, 1))
+        ax4.set_zlim((-1, 1))
         ax4.set_ylabel('y')
         ax4.set_zlabel('z')
 
@@ -324,10 +327,10 @@ class RHD(BaseDataset):
                                      noise_shape=[1, 1, 21])
             scoremap *= scoremap_dropout_prob
 
-        image_crop_tip, crop_size_best,image_nohand = RHD._parse_function_furtner(image, keypoint_uv21, hand_parts_mask)
+        image_crop_comb, hand_motion, image_crop_comb2 = RHD._parse_function_furtner(image, keypoint_uv21, hand_parts_mask)
 
-        return image, keypoint_xyz21, keypoint_uv21, scoremap, keypoint_vis21, k, num_px_left_hand, num_px_right_hand,\
-               image_crop_tip, crop_size_best, image_nohand
+        return image, keypoint_xyz21, keypoint_uv21, scoremap, keypoint_vis21, k, num_px_left_hand, num_px_right_hand, \
+               image_crop_comb, hand_motion, image_crop_comb2
 
 
     """
@@ -373,34 +376,60 @@ class RHD(BaseDataset):
         back_image = tf.ones_like(image)
         back_image = tf.stack([back_image[:, :, 0]*rgb_mean[0], back_image[:, :, 1]*rgb_mean[1], back_image[:, :, 2]*rgb_mean[2]], 2)
         image_nohand = tf.where(no_hand_mask, image, back_image)
-        image_nohand = tf.random_crop(image_nohand, [crop_size, crop_size, 3])
+        image_nohand = tf.random_crop(image_nohand, [crop_size*3, crop_size*3, 3])
 
         # （4）剪切
         scale = tf.cast(crop_size, tf.float32) / crop_size_best
-        img_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size, scale)
+        img_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size*3, scale)
         image_crop = tf.stack([img_crop[0, :, :, 0], img_crop[0, :, :, 1], img_crop[0, :, :, 2]], 2)
-        hand_parts_mask_crop = crop_image_from_xy(tf.expand_dims(hand_parts_mask, 0), crop_center, crop_size, scale)
+        hand_parts_mask_crop = crop_image_from_xy(tf.expand_dims(hand_parts_mask, 0), crop_center, crop_size*3, scale)
         hand_parts_mask_crop = tf.stack([hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0]], 2)
 
-        #（5）根据hand_parts_mask_crop， image_nohand， image_crop， 填充不变背景图片
+        # (5) image_crop hand_parts_mask_crop 是一个3倍于原图大小的剪切图片 二者需要做相同的旋转、平移、缩放操作
+        #随机生成6个百分比，对原始大图image，hand_parts_mask进行变换，重新执行（4）（5）
+        def tf_image_translate(images, tx, ty, interpolation='NEAREST'):
+            # got these parameters from solving the equations for pixel translations
+            # on https://www.tensorflow.org/api_docs/python/tf/contrib/image/transform
+            transforms = [1, 0, -tx, 0, 1, -ty, 0, 0]
+            return tf.contrib.image.transform(images, transforms, interpolation)
+        hand_motion = tf.truncated_normal([4], mean=0.0, stddev=0.25)# -0.5 ~ +0.5 [r, x, y, z]
+
+        image_crop2 = tf.contrib.image.rotate(image_crop, np.pi*hand_motion[0], interpolation='NEAREST', name=None)
+        image_crop2 = tf_image_translate(image_crop2, tx=crop_size*hand_motion[1], ty=crop_size*hand_motion[2])
+
+        hand_parts_mask_crop2 = tf.contrib.image.rotate(hand_parts_mask_crop, np.pi*hand_motion[0], interpolation='NEAREST', name=None)
+        hand_parts_mask_crop2 = tf_image_translate(hand_parts_mask_crop2, tx=crop_size*hand_motion[1], ty=crop_size*hand_motion[2])
+
+        #（6）根据hand_parts_mask_crop， image_nohand， image_crop， 填充不变背景图片
         no_hand_mask = tf.ones_like(hand_parts_mask_crop)
         no_hand_mask = tf.less(hand_parts_mask_crop, no_hand_mask * 2) #小于2的背景和人体（no hand）像素为true
-        image_crop = tf.where(no_hand_mask, image_nohand, image_crop)
+        image_crop_comb = tf.where(no_hand_mask, image_nohand, image_crop)
+        no_hand_mask2 = tf.ones_like(hand_parts_mask_crop2)
+        no_hand_mask2 = tf.less(hand_parts_mask_crop2, no_hand_mask2 * 2) #小于2的背景和人体（no hand）像素为true
+        image_crop_comb2 = tf.where(no_hand_mask2, image_nohand, image_crop2)
 
-        #随机生成6个百分比，对原始大图image，hand_parts_mask进行变换，重新执行（4）（5）
-        #noise = tf.truncated_normal([2], mean=0.0, stddev=crop_center_noise_sigma)
-        #
+        #(7)中间切割
 
-        return image_crop, crop_size_best, image_nohand
+        image_crop_comb = crop_image_from_xy(tf.expand_dims(image_crop_comb, 0), tf.constant([crop_size * 3//2,crop_size * 3//2]), crop_size)
+        image_crop_comb = tf.stack([image_crop_comb[0, :, :, 0], image_crop_comb[0, :, :, 1], image_crop_comb[0, :, :, 2]], 2)
+
+            #缩放切割 切割成crop_size*(1+hand_motion[3]*0.3)大小，然后resize缩放，从而模拟z轴变化
+        image_crop_comb2 = crop_image_from_xy(tf.expand_dims(image_crop_comb2, 0), tf.constant([crop_size * 3//2,crop_size * 3//2]),
+                                              crop_size, crop_size/(crop_size*(1+hand_motion[3]*0.3)))
+        image_crop_comb2 = tf.stack([image_crop_comb2[0, :, :, 0], image_crop_comb2[0, :, :, 1], image_crop_comb2[0, :, :, 2]], 2)
 
 
+        return image_crop_comb, hand_motion, image_crop_comb2
+
+"""
 dataset_RHD = RHD()
 with tf.Session() as sess:
 
     for i in tqdm(range(dataset_RHD.example_num)):
         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-        image_crop_tip, crop_size_best, image_nohand  \
+        image_crop_comb, hand_motion, image_crop_comb2  \
             = sess.run(dataset_RHD.get_batch_data)
 
         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-                           image_crop_tip[0], crop_size_best[0], image_nohand[0])
+                           image_crop_comb[0], hand_motion[0], image_crop_comb2[0])
+"""

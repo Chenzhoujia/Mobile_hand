@@ -7,21 +7,23 @@
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 
+
 from src.network_base import max_pool, upsample, inverted_bottleneck, separable_conv, convb, is_trainable
 
-N_KPOINTS = 21
+N_KPOINTS = 1
 STAGE_NUM = 4
 
 out_channel_ratio = lambda d: int(d * 1.0)
 up_channel_ratio = lambda d: int(d * 1.0)
 
-l2s = []
 
 
-def hourglass_module(inp, stage_nums):
+def hourglass_module(inp, stage_nums, l2s):
     if stage_nums > 0:
-        down_sample = max_pool(inp, 2, 2, 2, 2, name="hourglass_downsample_%d" % stage_nums)
-
+        down_sample = inp
+        #if stage_nums==3:
+        #    down_sample = max_pool(inp, 2, 2, 2, 2, name="hourglass_downsample_%d" % stage_nums)
+        #down_sample = inp
         block_front = slim.stack(down_sample, inverted_bottleneck,
                                  [
                                      (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
@@ -31,12 +33,13 @@ def hourglass_module(inp, stage_nums):
                                      (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
                                  ], scope="hourglass_front_%d" % stage_nums)
         stage_nums -= 1
-        block_mid = hourglass_module(block_front, stage_nums)
+        block_mid = hourglass_module(block_front, stage_nums, l2s)
         block_back = inverted_bottleneck(
             block_mid, up_channel_ratio(6), N_KPOINTS,
             0, 3, scope="hourglass_back_%d" % stage_nums)
-
-        up_sample = upsample(block_back, 2, "hourglass_upsample_%d" % stage_nums)
+        up_sample = block_back
+        #if stage_nums ==3:
+        #    up_sample = upsample(block_back, 2, "hourglass_upsample_%d" % stage_nums)
 
         # jump layer
         branch_jump = slim.stack(inp, inverted_bottleneck,
@@ -62,9 +65,10 @@ def hourglass_module(inp, stage_nums):
 
 
 def build_network(input, trainable):
+    l2s = []
     is_trainable(trainable)
 
-    net = convb(input, 3, 3, out_channel_ratio(16), 2, name="Conv2d_0")
+    net = convb(input, 3, 3, out_channel_ratio(16), 1, name="Conv2d_0")
 
     # 128, 112
     net = slim.stack(net, inverted_bottleneck,
@@ -85,7 +89,7 @@ def build_network(input, trainable):
 
     net_h_w = int(net.shape[1])
     # build network recursively
-    hg_out = hourglass_module(net, STAGE_NUM)
+    hg_out = hourglass_module(net, STAGE_NUM, l2s)
 
     for index, l2 in enumerate(l2s):
         l2_w_h = int(l2.shape[1])
@@ -94,8 +98,8 @@ def build_network(input, trainable):
         scale = net_h_w // l2_w_h
         l2s[index] = upsample(l2, scale, name="upsample_for_loss_%d" % index)
 
-    for index, l2 in enumerate(l2s):
-        scale = 4
-        l2s[index] = upsample(l2, scale, name="upsample2_for_loss_%d" % index)
+    # for index, l2 in enumerate(l2s):
+    #     scale = 4
+    #     l2s[index] = upsample(l2, scale, name="upsample2_for_loss_%d" % index)
 
     return hg_out, l2s
