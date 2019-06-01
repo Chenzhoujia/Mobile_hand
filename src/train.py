@@ -190,7 +190,7 @@ def main(argv=None):
             checkpoint_path = os.path.join(params['modelpath'], training_name)
 
             if checkpoint_path:
-                saver.restore(sess, checkpoint_path+'/model-12500')
+                saver.restore(sess, checkpoint_path+'/model-103000')
                 print("restore from " + checkpoint_path)
 
             summary_writer = tf.summary.FileWriter(os.path.join(params['logpath'], training_name), sess.graph)
