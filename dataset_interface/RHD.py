@@ -42,7 +42,7 @@ class RHD(BaseDataset):
         dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
         dataset = dataset.map(RHD._parse_function)
         dataset = dataset.repeat()
-        dataset = dataset.shuffle(buffer_size=40)
+        dataset = dataset.shuffle(buffer_size=320)
         self.dataset = dataset.batch(batchnum)
         #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
         self.iterator = self.dataset.make_one_shot_iterator()
