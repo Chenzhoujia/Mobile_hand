@@ -1,23 +1,14 @@
 import tensorflow as tf
-def list(v):
-    a = []
-    a.append(v)
-    v = tf.get_variable("v2", [1])
-    a.append(v)
-    a.append(v)
-    return a
-with tf.variable_scope("foo"):
-    v = tf.get_variable("v", [1])
-    vl = list(v)
-with tf.variable_scope("foo", reuse=True):
-    v1 = tf.get_variable("v", [1])
-    v1l = list(v1)
-a = v+v1
-b = a
-c = v+v1
-#assert v1 == v
+with tf.variable_scope('foo'):
+    a1 = tf.get_variable('bar',[5])
+    a2 = tf.get_variable('bar2', [5])
+    a3 = tf.stack([a1,a2], axis=1, name="final_rxyz")
+    #打印foo/bar:0
+    print(a1.name)
+    #output_node = tf.Variable(initial_value=a, name='final_rxyz_Variable')
+    output_node = tf.add(a1, 0, name='final_rxyz_Variable')
 init = tf.global_variables_initializer()
 with tf.Session() as sess:
     sess.run(init)
-    print(sess.run(v))
-    print(sess.run(v1))
+    print(sess.run(a3))
+    print(sess.run(output_node))

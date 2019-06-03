@@ -25,6 +25,7 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
     # 叠加在batch上重用特征提取网络
     input_image12 = tf.concat([input_image1, input_image2], 0)
     input_image12.set_shape([batchsize*2, 32, 32, 3])
+    input_image12 = tf.add(input_image12, 0, name='input_image')
     with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
         network_mv2_hourglass.N_KPOINTS = 8
         _, pred_heatmaps_all12 = get_network(model, input_image12, True)
@@ -54,12 +55,13 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         for i, out_chan in enumerate(out_chan_list):
             pred_heat = ops.fully_connected_relu(pred_heat, 'fc_vp_%d_%d' %(idx,i), out_chan=out_chan, trainable=True)
             evaluation = tf.placeholder_with_default(True, shape=())
-            pred_heat = ops.dropout(pred_heat, 0.95, evaluation)
+            pred_heat = pred_heat# ops.dropout(pred_heat, 0.95, evaluation)
 
         ux = ops.fully_connected(pred_heat, 'fc_vp_ux_%d' % idx, out_chan=1, trainable=True)
         uy = ops.fully_connected(pred_heat, 'fc_vp_uy_%d' % idx, out_chan=1, trainable=True)
         uz = ops.fully_connected(pred_heat, 'fc_vp_uz_%d' % idx, out_chan=1, trainable=True)
         ur = ops.fully_connected(pred_heat, 'fc_vp_ur_%d' % idx, out_chan=1, trainable=True)
+
 
         loss_l2r = tf.nn.l2_loss(hand_motion[:, 0] - ur[:, 0], name='lossr_heatmap_stage%d' % idx)
         loss_l2x = tf.nn.l2_loss(hand_motion[:, 1] - ux[:, 0], name='lossx_heatmap_stage%d' % idx)
@@ -150,8 +152,7 @@ def main(argv=None):
                     hand_motion = batch_data_all[9]
 
                     loss, last_heat_loss, ur, ux, uy, uz = get_loss_and_output(params['model'], params['batchsize'],
-                                                                          input_image1, input_image2, hand_motion, reuse_variable)
-                    reuse_variable = True
+                                                                input_image1, input_image2, hand_motion, reuse_variable)
                     grads = opt.compute_gradients(loss)
                     tower_grads.append(grads)
 
@@ -173,7 +174,7 @@ def main(argv=None):
         with tf.control_dependencies(update_ops):
             train_op = tf.group(apply_gradient_op, variables_averages_op)
 
-        saver = tf.train.Saver(max_to_keep=5)
+        saver = tf.train.Saver(max_to_keep=10)
 
         tf.summary.scalar("learning_rate", learning_rate)
         tf.summary.scalar("loss", loss)
@@ -188,10 +189,10 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-
+            model_name = '/model-500'
             if checkpoint_path:
-                saver.restore(sess, checkpoint_path+'/model-103000')
-                print("restore from " + checkpoint_path)
+                saver.restore(sess, checkpoint_path+model_name)
+                print("restore from " + checkpoint_path+model_name)
 
             summary_writer = tf.summary.FileWriter(os.path.join(params['logpath'], training_name), sess.graph)
             total_step_num = params['num_train_samples'] * params['max_epoch'] // (params['batchsize'] * params['gpus'])
@@ -203,7 +204,8 @@ def main(argv=None):
                     summary_ = sess.run(summary_merge_op)
                     summary_writer.add_summary(summary_, step)
                     """
-                    valid_loss_value, valid_lh_loss, valid_input_image1, valid_input_image2, valid_hand_motion , ur_v, ux_v, uy_v, uz_v= sess.run(
+                    valid_loss_value, valid_lh_loss, valid_input_image1, valid_input_image2, valid_hand_motion, \
+                    ur_v, ux_v, uy_v, uz_v= sess.run(
                         [loss, last_heat_loss, input_image1, input_image2, hand_motion,  ur, ux, uy, uz])
 
                     valid_input_image1 = (valid_input_image1 + 0.5) * 255
@@ -235,15 +237,14 @@ def main(argv=None):
                     ax3.set_ylim((-1, 1))
                     ax3.grid(True)
                     ax4.grid(True)
-
-
                     plt.savefig(os.path.join(params['logpath'], training_name)+"/"+str(step).zfill(10)+".png")
-
-
                 # save model
                 if step % params['per_saved_model_step'] == 0:
-                    saver.save(sess, os.path.join(checkpoint_path, 'model'), global_step=step)
                     print("loss_value: "+str(loss_value))
+                    saver.save(sess, os.path.join(checkpoint_path, 'model'), global_step=step)
+                    # used_vars = set()
+                    # for variable in sess.graph.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):
+                    #     used_vars.add(variable.name)
 
 if __name__ == '__main__':
     tf.app.run()

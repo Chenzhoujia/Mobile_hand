@@ -12,7 +12,7 @@
 # limitations under the License.
 # ===================================================================================
 # -*- coding: utf-8 -*-
-#--checkpoint=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_192x192_..-experiments-mv2_hourglass/model-5500 --output_graph=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_192x192_..-experiments-mv2_hourglass/model-5500.pb --size=192 --model=mv2_hourglass
+#--checkpoint=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-227500 --output_graph=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-227500.pb --size=32 --model=mv2_hourglass
 import tensorflow as tf
 import argparse
 import os
