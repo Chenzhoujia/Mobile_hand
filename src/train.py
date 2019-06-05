@@ -62,6 +62,8 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         uz = ops.fully_connected(pred_heat, 'fc_vp_uz_%d' % idx, out_chan=1, trainable=True)
         ur = ops.fully_connected(pred_heat, 'fc_vp_ur_%d' % idx, out_chan=1, trainable=True)
 
+        ufxuz = tf.concat(1, [ur, ux, uy, uz],name='fxuz')
+
 
         loss_l2r = tf.nn.l2_loss(hand_motion[:, 0] - ur[:, 0], name='lossr_heatmap_stage%d' % idx)
         loss_l2x = tf.nn.l2_loss(hand_motion[:, 1] - ux[:, 0], name='lossx_heatmap_stage%d' % idx)
@@ -71,7 +73,7 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
 
     total_loss = tf.reduce_sum(losses) / batchsize
     total_loss_ll_heat = losses[-1] / batchsize
-    return total_loss, total_loss_ll_heat, ur, ux, uy, uz
+    return total_loss, total_loss_ll_heat, ur, ux, uy, uz, ufxuz
 
 
 def average_gradients(tower_grads):
@@ -151,7 +153,7 @@ def main(argv=None):
                     input_image2 = batch_data_all[10]
                     hand_motion = batch_data_all[9]
 
-                    loss, last_heat_loss, ur, ux, uy, uz = get_loss_and_output(params['model'], params['batchsize'],
+                    loss, last_heat_loss, ur, ux, uy, uz, ufxuz = get_loss_and_output(params['model'], params['batchsize'],
                                                                 input_image1, input_image2, hand_motion, reuse_variable)
                     grads = opt.compute_gradients(loss)
                     tower_grads.append(grads)
@@ -189,7 +191,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-500'
+            model_name = '/model-124500'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)

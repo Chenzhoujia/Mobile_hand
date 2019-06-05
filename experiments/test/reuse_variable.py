@@ -1,8 +1,9 @@
 import tensorflow as tf
 with tf.variable_scope('foo'):
-    a1 = tf.get_variable('bar',[5])
-    a2 = tf.get_variable('bar2', [5])
+    a1 = tf.get_variable('bar',[1,5])
+    a2 = tf.get_variable('bar2', [1,5])
     a3 = tf.stack([a1,a2], axis=1, name="final_rxyz")
+    a3_ = tf.TensorArray()
     #打印foo/bar:0
     print(a1.name)
     #output_node = tf.Variable(initial_value=a, name='final_rxyz_Variable')

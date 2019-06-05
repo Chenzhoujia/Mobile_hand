@@ -27,14 +27,14 @@ from src.networks import get_network
 from src.general import NetworkOps
 
 ops = NetworkOps
-model_name = 'model-500'
+model_name = 'model-124500'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
 parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
 parser.add_argument('--size', type=int, default=32)
-parser.add_argument('--checkpoint', type=str, default='/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/'+model_name, help='checkpoint path')
-parser.add_argument('--output_node_names', type=str, default=['GPU_0/final_r_Variable','GPU_0/final_x_Variable','GPU_0/final_y_Variable','GPU_0/final_z_Variable'])
-parser.add_argument('--output_graph', type=str, default='/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/'+model_name+'.pb', help='output_freeze_path')
+parser.add_argument('--checkpoint', type=str, default='/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/'+model_name, help='checkpoint path')
+parser.add_argument('--output_node_names', type=str, default='GPU_0/final_fxuz_Variable') #['GPU_0/final_r_Variable','GPU_0/final_x_Variable','GPU_0/final_y_Variable','GPU_0/final_z_Variable'])
+parser.add_argument('--output_graph', type=str, default='/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/'+model_name+'.pb', help='output_freeze_path')
 
 args = parser.parse_args()
 i = 0
@@ -79,12 +79,14 @@ with tf.Graph().as_default(), tf.device("/cpu:0"):
                 uz = ops.fully_connected(pred_heat, 'fc_vp_uz_%d' % idx, out_chan=1, trainable=True)
                 ur = ops.fully_connected(pred_heat, 'fc_vp_ur_%d' % idx, out_chan=1, trainable=True)
                 #output_node = tf.stack([ur[:, 0], ux[:, 0], uy[:, 0], uz[:, 0]], axis=1, name="final_rxyz")
+                ufxuz = tf.concat(values=[ur, ux, uy, uz], axis=1, name='fxuz')
 
-            # output_node = tf.Variable(initial_value = output_node, name='final_rxyz_Variable')
-            output_node_ur = tf.add(ur, 0, name='final_r_Variable')
-            output_node_ux = tf.add(ux, 0, name='final_x_Variable')
-            output_node_uy = tf.add(uy, 0, name='final_y_Variable')
-            output_node_uz = tf.add(uz, 0, name='final_z_Variable')
+            # output_node_ur = tf.add(ur, 0, name='final_r_Variable')
+            # output_node_ux = tf.add(ux, 0, name='final_x_Variable')
+            # output_node_uy = tf.add(uy, 0, name='final_y_Variable')
+            # output_node_uz = tf.add(uz, 0, name='final_z_Variable')
+            output_node_ufxuz = tf.add(ufxuz, 0, name='final_fxuz_Variable')
+
     init = tf.global_variables_initializer()
     config = tf.ConfigProto()
     # occupy gpu gracefully
@@ -99,7 +101,7 @@ with tf.Graph().as_default(), tf.device("/cpu:0"):
         output_graph_def = tf.graph_util.convert_variables_to_constants(
             sess,  # The session
             input_graph_def,  # input_graph_def is useful for retrieving the nodes
-            args.output_node_names
+            args.output_node_names.split(",")
         )
 
 with tf.gfile.GFile(args.output_graph, "wb") as f:
@@ -109,15 +111,15 @@ with tf.gfile.GFile(args.output_graph, "wb") as f:
 """
 cd ~/Downloads/tensorflow 
 bazel-bin/tensorflow/tools/graph_transforms/summarize_graph \
---in_graph=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-500.pb
+--in_graph=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-500.pb
 
 source activate TFlite
 tflite_convert \
---graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-500.pb \
---output_file=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-16_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-500.lite \
+--graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-124500.pb \
+--output_file=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-124500.lite \
 --output_format=TFLITE \
 --input_shapes=2,32,32,3 \
 --input_arrays=GPU_0/input_image \
---output_arrays=GPU_0/final_r_Variable,GPU_0/final_x_Variable,GPU_0/final_y_Variable,GPU_0/final_z_Variable \
+--output_arrays=GPU_0/final_fxuz_Variable \
 --inference_type=FLOAT
 """
