@@ -85,7 +85,7 @@ with tf.Graph().as_default(), tf.device("/cpu:0"):
             # output_node_ux = tf.add(ux, 0, name='final_x_Variable')
             # output_node_uy = tf.add(uy, 0, name='final_y_Variable')
             # output_node_uz = tf.add(uz, 0, name='final_z_Variable')
-            output_node_ufxuz = tf.add(ufxuz, 0, name='final_fxuz_Variable')
+            output_node_ufxuz = tf.add(ufxuz, 0, name='final_fxuz_Variable')#(1,4)
 
     init = tf.global_variables_initializer()
     config = tf.ConfigProto()

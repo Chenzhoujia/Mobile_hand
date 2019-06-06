@@ -62,7 +62,7 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         uz = ops.fully_connected(pred_heat, 'fc_vp_uz_%d' % idx, out_chan=1, trainable=True)
         ur = ops.fully_connected(pred_heat, 'fc_vp_ur_%d' % idx, out_chan=1, trainable=True)
 
-        ufxuz = tf.concat(1, [ur, ux, uy, uz],name='fxuz')
+
 
 
         loss_l2r = tf.nn.l2_loss(hand_motion[:, 0] - ur[:, 0], name='lossr_heatmap_stage%d' % idx)
@@ -70,6 +70,7 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         loss_l2y = tf.nn.l2_loss(hand_motion[:, 2] - uy[:, 0], name='lossy_heatmap_stage%d' % idx)
         loss_l2z = tf.nn.l2_loss(hand_motion[:, 3] - uz[:, 0], name='lossz_heatmap_stage%d' % idx)
         losses.append(loss_l2r+loss_l2x+loss_l2y+loss_l2z)
+    ufxuz = tf.concat(values=[ur, ux, uy, uz], axis=1, name='fxuz')
 
     total_loss = tf.reduce_sum(losses) / batchsize
     total_loss_ll_heat = losses[-1] / batchsize
