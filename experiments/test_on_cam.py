@@ -14,10 +14,12 @@ from src import network_mv2_hourglass
 from src.networks import get_network
 from src.general import NetworkOps
 ops = NetworkOps
-
+def upsample(inputs, factor, name):
+    return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor],
+                                    name=name)
 if __name__ == '__main__':
 
-    model_name = 'model-124500'
+    model_name = 'model-173500'
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
     parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
@@ -39,14 +41,14 @@ if __name__ == '__main__':
             with tf.name_scope("GPU_%d" % i):
                 input_node = tf.placeholder(tf.float32, shape=[2, args.size, args.size, 3], name="input_image")
                 with tf.variable_scope(tf.get_variable_scope(), reuse=False):
-                    network_mv2_hourglass.N_KPOINTS = 8
+                    network_mv2_hourglass.N_KPOINTS = 1
                     _, pred_heatmaps_all12 = get_network('mv2_hourglass', input_node, True)
                 diffmap = []
                 for batch_i in range(len(pred_heatmaps_all12)):
                     diffmap.append(
                         pred_heatmaps_all12[batch_i][0:batchsize] - pred_heatmaps_all12[batch_i][
                                                                     batchsize:batchsize * 2])
-
+                preheat = upsample(pred_heatmaps_all12[-1], 2, name="upsample_for_hotmap_loss_%d" % batch_i)
                 # diffmap_t 将4个阶段的输出，在通道数上整合
                 for batch_i in range(len(diffmap)):
                     if batch_i == 0:
@@ -121,12 +123,12 @@ if __name__ == '__main__':
                 image_raw12_crop = np.concatenate((image_raw1_crop[np.newaxis, :], image_raw2_crop[np.newaxis, :]), axis=0)
                 image_raw12_crop = image_raw12_crop.astype('float') / 255.0 - 0.5
 
-                output_node_ufxuz_ = sess.run([output_node_ufxuz], feed_dict={input_node: image_raw12_crop})
+                preheat_v, output_node_ufxuz_ = sess.run([preheat, output_node_ufxuz], feed_dict={input_node: image_raw12_crop})
                 output_node_ufxuz_ = output_node_ufxuz_[0]
-                ur = round(output_node_ufxuz_[0][0], 3)
-                ux = round(output_node_ufxuz_[0][1], 3)
-                uy = round(output_node_ufxuz_[0][2], 3)
-                uz = round(output_node_ufxuz_[0][3], 3)
+                ur = round(output_node_ufxuz_[0], 3)
+                ux = round(output_node_ufxuz_[1], 3)
+                uy = round(output_node_ufxuz_[2], 3)
+                uz = round(output_node_ufxuz_[3], 3)
 
 
                 pt1 = (centerx, centery)
@@ -144,10 +146,15 @@ if __name__ == '__main__':
                 # visualize
                 fig = plt.figure(1)
                 fig.clear()
-                ax1 = fig.add_subplot(221)
-                ax2 = fig.add_subplot(222)
-                ax3 = fig.add_subplot(223)
-                ax4 = fig.add_subplot(224)
+                ax1 = fig.add_subplot(321)
+                ax2 = fig.add_subplot(322)
+                ax3 = fig.add_subplot(323)
+                ax4 = fig.add_subplot(324)
+                ax5 = fig.add_subplot(325)
+                ax5.imshow(preheat_v[0, :, :, 0])
+                ax6 = fig.add_subplot(326)
+                ax6.imshow(preheat_v[1, :, :, 0])
+
                 ax1.imshow(image_raw1)
                 ax2.imshow(image_raw2)
                 ax3.imshow(image_raw1_crop)
@@ -157,6 +164,6 @@ if __name__ == '__main__':
                 ax3.set_title('uy' + str(uy))
                 ax4.set_title('uz' + str(uz))
                 plt.savefig("/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/log/valid_on_cam/"+
-                            str(step).zfill(5)+".jpg");
+                            str(step).zfill(5)+".jpg")
                 plt.pause(0.01)
                 step = step+1
