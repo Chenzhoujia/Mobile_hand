@@ -18,8 +18,10 @@ from src import  network_mv2_hourglass
 from mpl_toolkits.mplot3d import Axes3D
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 ops = NetworkOps
-
-def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion, reuse_variables=None):
+def upsample(inputs, factor, name):
+    return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor],
+                                    name=name)
+def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion,scoremap1,scoremap2, reuse_variables=None):
     losses = []
 
     # 叠加在batch上重用特征提取网络
@@ -27,8 +29,20 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
     input_image12.set_shape([batchsize*2, 32, 32, 3])
     input_image12 = tf.add(input_image12, 0, name='input_image')
     with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
-        network_mv2_hourglass.N_KPOINTS = 8
+        network_mv2_hourglass.N_KPOINTS = 1
         _, pred_heatmaps_all12 = get_network(model, input_image12, True)
+    # 计算一个scoremap的loss
+    scoremap12 = tf.concat([scoremap1, scoremap2], 0)
+    scoremap12 = tf.reduce_sum(scoremap12,axis=-1)
+    scoremap12 = tf.expand_dims(scoremap12,axis=-1)
+    scoremap12.set_shape([batchsize * 2, 32, 32, 1])
+    loss_scoremap = 0
+    for loss_i in range(len(pred_heatmaps_all12)):
+        scale = 2
+        tmp = upsample(pred_heatmaps_all12[loss_i], scale, name="upsample_for_hotmap_loss_%d" % loss_i)
+        #loss_scoremap += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=tmp, labels=scoremap12))
+        loss_scoremap += tf.nn.l2_loss(tmp-scoremap12)
+    loss_scoremap=loss_scoremap/32.0/32.0/32.0
     diffmap = []
     for batch_i in range(len(pred_heatmaps_all12)):
         diffmap.append(pred_heatmaps_all12[batch_i][0:batchsize]-pred_heatmaps_all12[batch_i][batchsize:batchsize*2])
@@ -63,18 +77,17 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         ur = ops.fully_connected(pred_heat, 'fc_vp_ur_%d' % idx, out_chan=1, trainable=True)
 
 
-
-
         loss_l2r = tf.nn.l2_loss(hand_motion[:, 0] - ur[:, 0], name='lossr_heatmap_stage%d' % idx)
         loss_l2x = tf.nn.l2_loss(hand_motion[:, 1] - ux[:, 0], name='lossx_heatmap_stage%d' % idx)
         loss_l2y = tf.nn.l2_loss(hand_motion[:, 2] - uy[:, 0], name='lossy_heatmap_stage%d' % idx)
         loss_l2z = tf.nn.l2_loss(hand_motion[:, 3] - uz[:, 0], name='lossz_heatmap_stage%d' % idx)
-        losses.append(loss_l2r+loss_l2x+loss_l2y+loss_l2z)
+        losses.append(loss_l2x+loss_l2y+loss_l2r*0.1+loss_l2z*0.01)
     ufxuz = tf.concat(values=[ur, ux, uy, uz], axis=1, name='fxuz')
 
     total_loss = tf.reduce_sum(losses) / batchsize
-    total_loss_ll_heat = losses[-1] / batchsize
-    return total_loss, total_loss_ll_heat, ur, ux, uy, uz, ufxuz
+    alph = 0.5
+    total_loss = alph*loss_scoremap + (1-alph)*total_loss
+    return total_loss, loss_scoremap, ur, ux, uy, uz, ufxuz, tmp
 
 
 def average_gradients(tower_grads):
@@ -153,9 +166,11 @@ def main(argv=None):
                     input_image1 = batch_data_all[8]
                     input_image2 = batch_data_all[10]
                     hand_motion = batch_data_all[9]
+                    scoremap1 = batch_data_all[11]
+                    scoremap2 = batch_data_all[12]
 
-                    loss, last_heat_loss, ur, ux, uy, uz, ufxuz = get_loss_and_output(params['model'], params['batchsize'],
-                                                                input_image1, input_image2, hand_motion, reuse_variable)
+                    loss, loss_scoremap, ur, ux, uy, uz, ufxuz, preheat = get_loss_and_output(params['model'], params['batchsize'],
+                                                                input_image1, input_image2, hand_motion, scoremap1,scoremap2,reuse_variable)
                     grads = opt.compute_gradients(loss)
                     tower_grads.append(grads)
 
@@ -181,7 +196,6 @@ def main(argv=None):
 
         tf.summary.scalar("learning_rate", learning_rate)
         tf.summary.scalar("loss", loss)
-        tf.summary.scalar("loss_lastlayer_heat", last_heat_loss)
 
         summary_merge_op = tf.summary.merge_all()
 
@@ -192,24 +206,25 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-124500'
-            if checkpoint_path:
-                saver.restore(sess, checkpoint_path+model_name)
-                print("restore from " + checkpoint_path+model_name)
+            # model_name = '/model-124500'
+            # if checkpoint_path:
+            #     saver.restore(sess, checkpoint_path+model_name)
+            #     print("restore from " + checkpoint_path+model_name)
 
             summary_writer = tf.summary.FileWriter(os.path.join(params['logpath'], training_name), sess.graph)
             total_step_num = params['num_train_samples'] * params['max_epoch'] // (params['batchsize'] * params['gpus'])
             print("Start training...")
             for step in tqdm(range(total_step_num)):
-                _, loss_value, lh_loss = sess.run([train_op, loss, last_heat_loss])
-                if step % params['per_update_tensorboard_step'] == 0:
+                _, loss_value = sess.run([train_op, loss])
+                if step % params['per_saved_model_step'] == 0:
                     """
                     summary_ = sess.run(summary_merge_op)
                     summary_writer.add_summary(summary_, step)
                     """
-                    valid_loss_value, valid_lh_loss, valid_input_image1, valid_input_image2, valid_hand_motion, \
-                    ur_v, ux_v, uy_v, uz_v= sess.run(
-                        [loss, last_heat_loss, input_image1, input_image2, hand_motion,  ur, ux, uy, uz])
+                    valid_loss_value, valid_scoremap_loss, valid_input_image1, valid_input_image2, valid_hand_motion, \
+                    ur_v, ux_v, uy_v, uz_v, preheat_v, scoremap1_v, scoremap2_v= sess.run(
+                        [loss, loss_scoremap, input_image1, input_image2, hand_motion,
+                         ur, ux, uy, uz, preheat, scoremap1, scoremap2])
 
                     valid_input_image1 = (valid_input_image1 + 0.5) * 255
                     valid_input_image1 = valid_input_image1.astype(np.int16)
@@ -219,31 +234,36 @@ def main(argv=None):
 
                     fig = plt.figure(1)
                     plt.clf()
-                    ax1 = fig.add_subplot('221')
+                    ax1 = fig.add_subplot('331')
                     ax1.imshow(valid_input_image1[0, :, :, :])
-                    ax2 = fig.add_subplot('222')
-                    ax2.set_title("loss:" + str(valid_loss_value))
+                    ax2 = fig.add_subplot('332')
                     ax2.imshow(valid_input_image2[0, :, :, :])
-                    ax3 = fig.add_subplot('223')
-                    ax3.plot([0.1, 0.1], [0, valid_hand_motion[0, 0]], label= "label", color='red')
-                    ax3.plot([0.2, 0.2], [0, ur_v[0]], label="predict", color='blue')
-                    ax3.plot([0.6, 0.6], [0, valid_hand_motion[0, 3]], label= "label", color='red')
-                    ax3.plot([0.7, 0.7], [0, uz_v[0]], label="predict", color='blue')
-                    ax4 = fig.add_subplot('224')
-                    ax4.plot([0, valid_hand_motion[0, 1]], [0, valid_hand_motion[0, 2]], label= "label", color='red')
-                    ax4.plot([0, ux_v[0]], [0, uy_v[0]], label="predict", color='blue')
-                    ax4.set_xlabel('x')
-                    ax4.set_ylabel('y')
-                    ax4.set_xlim((-1, 1))
-                    ax4.set_ylim((-1, 1))
-                    ax3.set_xlim((0, 1))
+                    ax3 = fig.add_subplot('333')
+                    ax3.plot([0, valid_hand_motion[0, 1]], [0, valid_hand_motion[0, 2]], label= "label", color='red')
+                    ax3.plot([0, ux_v[0]], [0, uy_v[0]], label="predict", color='blue')
+                    ax3.set_title("loss:" + str(valid_loss_value-valid_scoremap_loss*0.5))
+
+
+                    ax4 = fig.add_subplot('334')
+                    ax4.imshow(np.sum(scoremap1_v[0], axis=-1))
+                    ax5 = fig.add_subplot('335')
+                    ax5.imshow(np.sum(scoremap2_v[0], axis=-1))
+
+                    ax7 = fig.add_subplot('337')
+                    ax7.imshow(preheat_v[0, :, :, 0])
+                    ax8 = fig.add_subplot('338')
+                    ax8.imshow(preheat_v[32, :, :, 0])
+                    ax7.set_title("loss:" + str(valid_scoremap_loss*0.5))
+                    ax3.set_xlim((-1, 1))
                     ax3.set_ylim((-1, 1))
                     ax3.grid(True)
-                    ax4.grid(True)
+                    print(valid_loss_value)
+                    print(valid_scoremap_loss*0.5)
+
                     plt.savefig(os.path.join(params['logpath'], training_name)+"/"+str(step).zfill(10)+".png")
                 # save model
                 if step % params['per_saved_model_step'] == 0:
-                    print("loss_value: "+str(loss_value))
+                    #print("loss_value: "+str(loss_value))
                     saver.save(sess, os.path.join(checkpoint_path, 'model'), global_step=step)
                     # used_vars = set()
                     # for variable in sess.graph.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):

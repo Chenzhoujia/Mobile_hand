@@ -50,7 +50,7 @@ class RHD(BaseDataset):
 
     @staticmethod
     def visualize_data(image, xyz, uv, uv_vis, k, num_px_left_hand, num_px_right_hand, scoremap,
-                       image_crop_tip, crop_size_best,  image_nohand):
+                       image_crop_tip, crop_size_best,  image_nohand, scoremap_1, scoremap_2):
         # get info from annotation dictionary
 
         image = (image + 0.5) * 255
@@ -67,31 +67,32 @@ class RHD(BaseDataset):
         kp_visible =(uv_vis == 1)  # visibility of the keypoints, boolean
         kp_coord_xyz = xyz  # x, y, z coordinates of the keypoints, in meters
         camera_intrinsic_matrix = k  # matrix containing intrinsic parameters
-        scoremap = np.sum(scoremap, axis=-1)
         # Project world coordinates into the camera frame
         kp_coord_uv_proj = np.matmul(kp_coord_xyz, np.transpose(camera_intrinsic_matrix))
         kp_coord_uv_proj = kp_coord_uv_proj[:, :2] / kp_coord_uv_proj[:, 2:]
 
         # Visualize data
         fig = plt.figure(1)
-        ax1 = fig.add_subplot('231')
+        ax1 = fig.add_subplot('331')
         ax1.set_title("left_hand:"+str(num_px_left_hand)+"right_hand:"+str(num_px_right_hand))
-        ax2 = fig.add_subplot('232')
-        ax3 = fig.add_subplot('233')
-        ax4 = fig.add_subplot('234', projection='3d')
-        ax5 = fig.add_subplot('235')
+        ax2 = fig.add_subplot('332')
+        ax3 = fig.add_subplot('333')
+        ax4 = fig.add_subplot('334', projection='3d')
+        ax5 = fig.add_subplot('335')
 
         ax5.imshow(image_crop_tip)
         ax5.set_title(str(crop_size_best[0]))
-        ax6 = fig.add_subplot('236')
+        ax6 = fig.add_subplot('336')
         ax6.imshow(image_nohand)
         ax1.imshow(image)
         ax1.scatter(kp_coord_uv[kp_visible, 0], kp_coord_uv[kp_visible, 1], marker='o', color='blue', s=5)
-        ax2.scatter(kp_coord_uv_proj[:, 0], kp_coord_uv_proj[:, 1], marker='x', color='red', s=5)
-        ax2.imshow(image)
-
-
-        ax3.imshow(scoremap)
+        #ax2.scatter(kp_coord_uv_proj[:, 0], kp_coord_uv_proj[:, 1], marker='x', color='red', s=5)
+        ax2.imshow(np.sum(scoremap_1, axis=-1))
+        sum = np.sum(np.sum(scoremap_1, axis=0), axis=0)
+        ax2.set_title(str(sum))
+        ax3.imshow(np.sum(scoremap_2, axis=-1))
+        sum = np.sum(np.sum(scoremap_2, axis=0), axis=0)
+        ax3.set_title(str(sum))
         ax4.plot([0,crop_size_best[1]], [0,crop_size_best[2]], [0,crop_size_best[3]])
         ax4.view_init(azim=-90.0, elev=-90.0)  # aligns the 3d coord with the camera view
         ax4.set_xlabel('x')
@@ -100,7 +101,8 @@ class RHD(BaseDataset):
         ax4.set_zlim((-1, 1))
         ax4.set_ylabel('y')
         ax4.set_zlabel('z')
-
+        ax8 = fig.add_subplot('338')
+        ax9 = fig.add_subplot('339')
         plt.show()
 
     @staticmethod
@@ -125,7 +127,6 @@ class RHD(BaseDataset):
         
         """
         # general parameters
-        batch_size = 4
 
         coord_uv_noise = False
         coord_uv_noise_sigma = 1.0  # std dev in px of noise on the uv coordinates
@@ -147,7 +148,7 @@ class RHD(BaseDataset):
         scale_to_size = False
         scoremap_dropout = False
         scoremap_dropout_prob = 0.8
-        sigma = 25.0
+        sigma = 6.0
         shuffle = True
         use_wrist_coord = False
 
@@ -322,23 +323,30 @@ class RHD(BaseDataset):
                                                              sigma,
                                                              valid_vec=keypoint_vis21)
 
-        if scoremap_dropout:
-            scoremap = tf.nn.dropout(scoremap, scoremap_dropout_prob,
-                                     noise_shape=[1, 1, 21])
-            scoremap *= scoremap_dropout_prob
-
-        image_crop_comb, hand_motion, image_crop_comb2 = RHD._parse_function_furtner(image, keypoint_uv21, hand_parts_mask)
+        # if scoremap_dropout:
+        #     scoremap = tf.nn.dropout(scoremap, scoremap_dropout_prob,
+        #                              noise_shape=[1, 1, 21])
+        #     scoremap *= scoremap_dropout_prob
+        scoremap = tf.concat([tf.expand_dims(scoremap[:,:,1],-1),tf.expand_dims(scoremap[:,:,5],-1)
+                              ,tf.expand_dims(scoremap[:,:,9],-1),tf.expand_dims(scoremap[:,:,13],-1)
+                              ,tf.expand_dims(scoremap[:, :, 17], -1)], 2)
+        image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2\
+            = RHD._parse_function_furtner(image, keypoint_uv21, hand_parts_mask, scoremap)
 
         return image, keypoint_xyz21, keypoint_uv21, scoremap, keypoint_vis21, k, num_px_left_hand, num_px_right_hand, \
-               image_crop_comb, hand_motion, image_crop_comb2
+               image_crop_comb, hand_motion, image_crop_comb2, scoremap1, scoremap2
 
 
     """
     Keypoints available:
     0: left wrist, 1-4: left thumb [tip to palm], 5-8: left index, ..., 17-20: left pinky,
+    Segmentation masks available:
+    0: background, 1: person, 
+    2-4: left thumb [tip to palm], 5-7: left index, ..., 14-16: left pinky, 17: palm, 
+    18-20: right thumb, ..., right palm: 33
     """
     @staticmethod
-    def _parse_function_furtner(image, keypoint_uv21, hand_parts_mask):
+    def _parse_function_furtner(image, keypoint_uv21, hand_parts_mask, scoremap=None):
 
         crop_size = 32
 
@@ -378,13 +386,45 @@ class RHD(BaseDataset):
         image_nohand = tf.where(no_hand_mask, image, back_image)
         image_nohand = tf.random_crop(image_nohand, [crop_size*3, crop_size*3, 3])
 
-        # （4）剪切
+
+
+        # （4）剪切 按照crop_size_best截取像素 缩放到 crop_size
         scale = tf.cast(crop_size, tf.float32) / crop_size_best
         img_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size*3, scale)
         image_crop = tf.stack([img_crop[0, :, :, 0], img_crop[0, :, :, 1], img_crop[0, :, :, 2]], 2)
+
         hand_parts_mask_crop = crop_image_from_xy(tf.expand_dims(hand_parts_mask, 0), crop_center, crop_size*3, scale)
         hand_parts_mask_crop = tf.stack([hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0]], 2)
 
+        scoremap = crop_image_from_xy(tf.expand_dims(scoremap, 0), crop_center, crop_size*3, scale)
+        scoremap = tf.stack([scoremap[0, :, :, 0], scoremap[0, :, :, 1], scoremap[0, :, :, 2],
+                             scoremap[0, :, :, 3], scoremap[0, :, :, 4]], 2)
+        #制作5个指尖的mask，对scoremap的5个维度进行过滤
+        ones_mask = tf.ones_like(hand_parts_mask_crop[:, :, 0])
+        zeros_mask = tf.zeros_like(scoremap[:, :, 1])
+
+        finger_mask = tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 2) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 18) | \
+                      tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 3) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 19)
+        scoremap_mask1 = tf.where(finger_mask, scoremap[:, :, 0], zeros_mask)
+
+        finger_mask = tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 5) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 21) | \
+                      tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 6) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 22)
+        scoremap_mask2 = tf.where(finger_mask, scoremap[:, :, 1], zeros_mask)
+
+        finger_mask = tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 8) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 24) | \
+                      tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 9) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 25)
+        scoremap_mask3 = tf.where(finger_mask, scoremap[:, :, 2], zeros_mask)
+
+        finger_mask = tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 11) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 27) | \
+                      tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 12) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 28)
+        scoremap_mask4 = tf.where(finger_mask, scoremap[:, :, 3], zeros_mask)
+
+        finger_mask = tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 14) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 30) | \
+                      tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 15) | tf.equal(hand_parts_mask_crop[:, :, 0], ones_mask * 31)
+        scoremap_mask5 = tf.where(finger_mask, scoremap[:, :, 4], zeros_mask)
+
+
+        scoremap = tf.stack([scoremap_mask1, scoremap_mask2, scoremap_mask3, scoremap_mask4, scoremap_mask5], 2)
         # (5) image_crop hand_parts_mask_crop 是一个3倍于原图大小的剪切图片 二者需要做相同的旋转、平移、缩放操作
         #随机生成6个百分比，对原始大图image，hand_parts_mask进行变换，重新执行（4）（5）
         def tf_image_translate(images, tx, ty, interpolation='NEAREST'):
@@ -394,11 +434,14 @@ class RHD(BaseDataset):
             return tf.contrib.image.transform(images, transforms, interpolation)
         hand_motion = tf.truncated_normal([4], mean=0.0, stddev=0.25)# -0.5 ~ +0.5 [r, x, y, z]
 
-        image_crop2 = tf.contrib.image.rotate(image_crop, np.pi*hand_motion[0], interpolation='NEAREST', name=None)
+        image_crop2 = tf.contrib.image.rotate(image_crop, np.pi*hand_motion[0]*0.1, interpolation='NEAREST', name=None)
         image_crop2 = tf_image_translate(image_crop2, tx=crop_size*hand_motion[1], ty=crop_size*hand_motion[2])
 
-        hand_parts_mask_crop2 = tf.contrib.image.rotate(hand_parts_mask_crop, np.pi*hand_motion[0], interpolation='NEAREST', name=None)
+        hand_parts_mask_crop2 = tf.contrib.image.rotate(hand_parts_mask_crop, np.pi*hand_motion[0]*0.1, interpolation='NEAREST', name=None)
         hand_parts_mask_crop2 = tf_image_translate(hand_parts_mask_crop2, tx=crop_size*hand_motion[1], ty=crop_size*hand_motion[2])
+
+        scoremap2 = tf.contrib.image.rotate(scoremap, np.pi*hand_motion[0]*0.1, interpolation='NEAREST', name=None)
+        scoremap2 = tf_image_translate(scoremap2, tx=crop_size*hand_motion[1], ty=crop_size*hand_motion[2])
 
         #（6）根据hand_parts_mask_crop， image_nohand， image_crop， 填充不变背景图片
         no_hand_mask = tf.ones_like(hand_parts_mask_crop)
@@ -408,28 +451,65 @@ class RHD(BaseDataset):
         no_hand_mask2 = tf.less(hand_parts_mask_crop2, no_hand_mask2 * 2) #小于2的背景和人体（no hand）像素为true
         image_crop_comb2 = tf.where(no_hand_mask2, image_nohand, image_crop2)
 
-        #(7)中间切割
+        #(7)随机切割
+        center_alph = tf.truncated_normal([2], mean=0.0, stddev=0.5)# -1 ~ +1 [r, x, y, z]
+        tx = crop_size * hand_motion[1]
+        ty = crop_size * hand_motion[2]
 
-        image_crop_comb = crop_image_from_xy(tf.expand_dims(image_crop_comb, 0), tf.constant([crop_size * 3//2,crop_size * 3//2]), crop_size)
-        image_crop_comb = tf.stack([image_crop_comb[0, :, :, 0], image_crop_comb[0, :, :, 1], image_crop_comb[0, :, :, 2]], 2)
+        center_center = [crop_size * 3//2+(1+center_alph[1])*ty//2, crop_size * 3//2+(1+center_alph[0])*tx//2]
 
-            #缩放切割 切割成crop_size*(1+hand_motion[3]*0.3)大小，然后resize缩放，从而模拟z轴变化
-        image_crop_comb2 = crop_image_from_xy(tf.expand_dims(image_crop_comb2, 0), tf.constant([crop_size * 3//2,crop_size * 3//2]),
-                                              crop_size, crop_size/(crop_size*(1+hand_motion[3]*0.3)))
-        image_crop_comb2 = tf.stack([image_crop_comb2[0, :, :, 0], image_crop_comb2[0, :, :, 1], image_crop_comb2[0, :, :, 2]], 2)
+        image_crop2_comb = crop_image_from_xy(tf.expand_dims(image_crop_comb, 0), center_center, crop_size)
+        image_crop2_comb = tf.stack([image_crop2_comb[0, :, :, 0], image_crop2_comb[0, :, :, 1], image_crop2_comb[0, :, :, 2]], 2)
+
+        #缩放切割 切割成crop_size*(1+hand_motion[3]*0.3)大小，然后resize缩放，从而模拟z轴变化
+        image_crop2_comb2 = crop_image_from_xy(tf.expand_dims(image_crop_comb2, 0), center_center,crop_size, crop_size/(crop_size*(1+hand_motion[3]*0.01)))
+        image_crop2_comb2 = tf.stack([image_crop2_comb2[0, :, :, 0], image_crop2_comb2[0, :, :, 1], image_crop2_comb2[0, :, :, 2]], 2)
+
+        scoremap = crop_image_from_xy(tf.expand_dims(scoremap, 0), center_center, crop_size)
+        scoremap = tf.stack([scoremap[0, :, :, 0], scoremap[0, :, :, 1], scoremap[0, :, :, 2],
+                             scoremap[0, :, :, 3], scoremap[0, :, :, 4]], 2)
+        scoremap2 = crop_image_from_xy(tf.expand_dims(scoremap2, 0), center_center, crop_size, crop_size/(crop_size*(1+hand_motion[3]*0.01)))
+        scoremap2 = tf.stack([scoremap2[0, :, :, 0], scoremap2[0, :, :, 1], scoremap2[0, :, :, 2],
+                             scoremap2[0, :, :, 3], scoremap2[0, :, :, 4]], 2)
+
+        # hand_parts_mask_crop = crop_image_from_xy(tf.expand_dims(hand_parts_mask_crop, 0), center_center, crop_size)
+        # hand_parts_mask_crop = tf.stack([hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0], hand_parts_mask_crop[0, :, :, 0]], 2)
+        # hand_parts_mask_crop2 = crop_image_from_xy(tf.expand_dims(hand_parts_mask_crop2, 0), center_center, crop_size, crop_size/(crop_size*(1+hand_motion[3]*0.01)))
+        # hand_parts_mask_crop2 = tf.stack([hand_parts_mask_crop2[0, :, :, 0], hand_parts_mask_crop2[0, :, :, 0], hand_parts_mask_crop2[0, :, :, 0]], 2)
+
+        def scoremap_filter(scoremap):
+            zeros_mask = tf.zeros_like(scoremap[:,:,0])
+            scoremap_mask1 = scoremap[:,:,0]
+            scoremap_mask2 = scoremap[:,:,1]
+            scoremap_mask3 = scoremap[:,:,2]
+            scoremap_mask4 = scoremap[:,:,3]
+            scoremap_mask5 = scoremap[:,:,4]
+
+            scoremap_mask1 = tf.cond(tf.less(x=tf.reduce_sum(scoremap_mask1),y=tf.constant(10.0)), true_fn=lambda: zeros_mask,
+                                     false_fn=lambda: scoremap_mask1)
+            scoremap_mask2 = tf.cond(tf.less(x=tf.reduce_sum(scoremap_mask2),y=tf.constant(10.0)), true_fn=lambda: zeros_mask,
+                                     false_fn=lambda: scoremap_mask2)
+            scoremap_mask3 = tf.cond(tf.less(x=tf.reduce_sum(scoremap_mask3),y=tf.constant(10.0)), true_fn=lambda: zeros_mask,
+                                     false_fn=lambda: scoremap_mask3)
+            scoremap_mask4 = tf.cond(tf.less(x=tf.reduce_sum(scoremap_mask4),y=tf.constant(10.0)), true_fn=lambda: zeros_mask,
+                                     false_fn=lambda: scoremap_mask4)
+            scoremap_mask5 = tf.cond(tf.less(x=tf.reduce_sum(scoremap_mask5),y=tf.constant(10.0)), true_fn=lambda: zeros_mask,
+                                     false_fn=lambda: scoremap_mask5)
+            return tf.stack([scoremap_mask1, scoremap_mask2, scoremap_mask3, scoremap_mask4, scoremap_mask5], 2)
+
+        scoremap = scoremap_filter(scoremap)
+        scoremap2 = scoremap_filter(scoremap2)
 
 
-        return image_crop_comb, hand_motion, image_crop_comb2
+        return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2
 
-"""
-dataset_RHD = RHD()
-with tf.Session() as sess:
-
-    for i in tqdm(range(dataset_RHD.example_num)):
-        image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-        image_crop_comb, hand_motion, image_crop_comb2  \
-            = sess.run(dataset_RHD.get_batch_data)
-
-        RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-                           image_crop_comb[0], hand_motion[0], image_crop_comb2[0])
-"""
+# dataset_RHD = RHD()
+# with tf.Session() as sess:
+#
+#     for i in tqdm(range(dataset_RHD.example_num)):
+#         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \ 0~7
+#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 \8~12
+#             = sess.run(dataset_RHD.get_batch_data)
+#
+#         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+#                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
