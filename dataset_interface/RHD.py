@@ -179,11 +179,7 @@ class RHD(BaseDataset):
         keypoint_vis = tf.cast(keypoint_uv[:, 2], tf.bool)
         keypoint_uv = keypoint_uv[:, :2]
 
-        """参数
-        
-        """
         # general parameters
-
         coord_uv_noise = False
         coord_uv_noise_sigma = 1.0  # std dev in px of noise on the uv coordinates
         crop_center_noise = True
@@ -195,17 +191,7 @@ class RHD(BaseDataset):
         hand_crop = False
         hue_aug = False
         hue_aug_max = 0.1
-
-        num_kp = 42
-        num_samples = 41258
-        random_crop_size = 256
-        random_crop_to_size = False
-        scale_target_size = (240, 320)  # size its scaled down to if scale_to_size=True
-        scale_to_size = False
-        scoremap_dropout = False
-        scoremap_dropout_prob = 0.8
         sigma = 6.0
-        shuffle = True
         use_wrist_coord = False
 
         # 使用掌心代替手腕
@@ -551,10 +537,16 @@ class RHD(BaseDataset):
                                      false_fn=lambda: scoremap_mask4)
             scoremap_mask5 = tf.cond(tf.less(x=tf.reduce_sum(scoremap_mask5),y=tf.constant(10.0)), true_fn=lambda: zeros_mask,
                                      false_fn=lambda: scoremap_mask5)
+
             return tf.stack([scoremap_mask1, scoremap_mask2, scoremap_mask3, scoremap_mask4, scoremap_mask5], 2)
 
         scoremap = scoremap_filter(scoremap)
         scoremap2 = scoremap_filter(scoremap2)
+        # 当热度图中任意一个为空时，将handmotion置0
+        hand_motion = tf.cond(tf.less(x=tf.reduce_sum(scoremap), y=tf.constant(10.0)), true_fn=lambda: tf.zeros_like(hand_motion),
+                      false_fn=lambda: hand_motion)
+        hand_motion = tf.cond(tf.less(x=tf.reduce_sum(scoremap2), y=tf.constant(10.0)), true_fn=lambda: tf.zeros_like(hand_motion),
+                      false_fn=lambda: hand_motion)
 
 
         return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2
@@ -569,8 +561,8 @@ with tf.Session() as sess:
         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
 
-        image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-        image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_back_data)
-
-        RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-                           image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
+        # image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
+        # image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_back_data)
+        #
+        # RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+        #                    image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
