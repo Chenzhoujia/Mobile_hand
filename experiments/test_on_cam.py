@@ -7,6 +7,7 @@ import tensorflow as tf
 import numpy as np
 import scipy.misc
 import matplotlib.pyplot as plt
+import matplotlib.image
 import time
 from mpl_toolkits.mplot3d import Axes3D
 import cv2, os
@@ -19,7 +20,7 @@ def upsample(inputs, factor, name):
                                     name=name)
 if __name__ == '__main__':
 
-    model_name = 'model-173500'
+    model_name = 'model-11500'
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
     parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
@@ -101,24 +102,31 @@ if __name__ == '__main__':
             step = 0
             centerx = 160
             centery = 120
-            while(True):
-                # 获取相隔0.1s的两帧图片，做根据初始化或者网络输出结果，绘制矩形框，进行剪裁，reshape
-                _,image_raw1 = cap.read()
-                image_raw1 = scipy.misc.imresize(image_raw1, (240, 320))
-                time.sleep(0.1)
-                _,image_raw2 = cap.read()
-                image_raw2 = scipy.misc.imresize(image_raw2, (240, 320))
-                    # 剪切 resize
 
-                size = 24
-                image_raw1_crop = np.array(image_raw1[centery - size: centery + size, centerx - size: centerx + size])
-                image_raw2_crop = np.array(image_raw2[centery - size: centery + size, centerx - size: centerx + size])
-                image_raw1_crop = cv2.resize(image_raw1_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
-                image_raw2_crop = cv2.resize(image_raw2_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
-                first_point = (centerx-size, centery-size)
-                last_point = (centerx+size, centery+size)
-                cv2.rectangle(image_raw1, first_point, last_point, (0, 255, 0), 2)
-                cv2.rectangle(image_raw2, first_point, last_point, (0, 255, 0), 2)
+            path = "/home/chen/Documents/Mobile_hand/experiments/varify/image/set1/"
+
+            for i in range(142):
+                image_raw1_crop = matplotlib.image.imread(path + str(step).zfill(5) + '_1.jpg')
+                image_raw2_crop = matplotlib.image.imread(path + str(step).zfill(5) + '_2.jpg')
+
+            # while(True):
+            #     # 获取相隔0.1s的两帧图片，做根据初始化或者网络输出结果，绘制矩形框，进行剪裁，reshape
+            #     _,image_raw1 = cap.read()
+            #     image_raw1 = scipy.misc.imresize(image_raw1, (240, 320))
+            #     time.sleep(0.1)
+            #     _,image_raw2 = cap.read()
+            #     image_raw2 = scipy.misc.imresize(image_raw2, (240, 320))
+            #         # 剪切 resize
+            #
+            #     size = 24
+            #     image_raw1_crop = np.array(image_raw1[centery - size: centery + size, centerx - size: centerx + size])
+            #     image_raw2_crop = np.array(image_raw2[centery - size: centery + size, centerx - size: centerx + size])
+            #     image_raw1_crop = cv2.resize(image_raw1_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
+            #     image_raw2_crop = cv2.resize(image_raw2_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
+            #     first_point = (centerx-size, centery-size)
+            #     last_point = (centerx+size, centery+size)
+            #     cv2.rectangle(image_raw1, first_point, last_point, (0, 255, 0), 2)
+            #     cv2.rectangle(image_raw2, first_point, last_point, (0, 255, 0), 2)
 
                 image_raw12_crop = np.concatenate((image_raw1_crop[np.newaxis, :], image_raw2_crop[np.newaxis, :]), axis=0)
                 image_raw12_crop = image_raw12_crop.astype('float') / 255.0 - 0.5
@@ -130,19 +138,18 @@ if __name__ == '__main__':
                 uy = round(output_node_ufxuz_[2], 3)
                 uz = round(output_node_ufxuz_[3], 3)
 
-
-                pt1 = (centerx, centery)
-                pt2 = (centerx-int(ux*48), centery-int(uy*48))
-                cv2.arrowedLine(image_raw1, pt1, pt2, (255, 0, 0), 2)
-
-                if (abs(ux) > 0.12):
-                    centerx=centerx - int(ux*48)
-                    if(centerx<=24 or centerx>=320-24):
-                        centerx = 160
-                if (abs(uy) > 0.12):
-                    centery=centery - int(uy*48)
-                    if(centery<=24 or centery>=240-24):
-                       centery = 120
+                # pt1 = (centerx, centery)
+                # pt2 = (centerx-int(ux*48), centery-int(uy*48))
+                # cv2.arrowedLine(image_raw1, pt1, pt2, (255, 0, 0), 2)
+                #
+                # if (abs(ux) > 0.12):
+                #     centerx=centerx - int(ux*48)
+                #     if(centerx<=24 or centerx>=320-24):
+                #         centerx = 160
+                # if (abs(uy) > 0.12):
+                #     centery=centery - int(uy*48)
+                #     if(centery<=24 or centery>=240-24):
+                #        centery = 120
                 # visualize
                 fig = plt.figure(1)
                 fig.clear()
@@ -151,19 +158,18 @@ if __name__ == '__main__':
                 ax3 = fig.add_subplot(323)
                 ax4 = fig.add_subplot(324)
                 ax5 = fig.add_subplot(325)
-                ax5.imshow(preheat_v[0, :, :, 0])
-                ax6 = fig.add_subplot(326)
-                ax6.imshow(preheat_v[1, :, :, 0])
 
-                ax1.imshow(image_raw1)
-                ax2.imshow(image_raw2)
-                ax3.imshow(image_raw1_crop)
-                ax4.imshow(image_raw2_crop)
-                ax1.set_title('ur' + str(ur))
-                ax2.set_title('ux' + str(ux))
-                ax3.set_title('uy' + str(uy))
-                ax4.set_title('uz' + str(uz))
-                plt.savefig("/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/log/valid_on_cam/"+
+                ax1.imshow(image_raw1_crop)
+                ax2.imshow(image_raw2_crop)
+                ax3.imshow(preheat_v[0, :, :, 0])
+                ax4.imshow(preheat_v[1, :, :, 0])
+
+                ax5.plot([0, ux], [0, uy], label="predict", color='blue')
+                ax5.set_xlim((-1, 1))
+                ax5.set_ylim((1, -1))
+                ax5.grid(True)
+
+                plt.savefig("/home/chen/Documents/Mobile_hand/experiments/varify/image/valid_on_cam/"+
                             str(step).zfill(5)+".jpg")
                 plt.pause(0.01)
                 step = step+1
