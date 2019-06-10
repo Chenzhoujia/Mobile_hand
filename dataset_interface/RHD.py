@@ -38,7 +38,16 @@ class RHD(BaseDataset):
 
         assert self.example_num == len(anno_all), '标签和样本数量不一致'
 
-        # 创建数据集
+        # 创建背景数据集
+        dataset_back = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
+        dataset_back = dataset_back.map(RHD._parse_function_background)
+        dataset_back = dataset_back.repeat()
+        dataset_back = dataset_back.shuffle(buffer_size=320)
+        self.dataset_back = dataset_back.batch(batchnum)
+        self.iterator_back = self.dataset_back.make_one_shot_iterator()
+        self.get_batch_back_data = self.iterator_back.get_next()
+
+        # 创建正经数据集
         dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
         dataset = dataset.map(RHD._parse_function)
         dataset = dataset.repeat()
@@ -47,6 +56,7 @@ class RHD(BaseDataset):
         #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
         self.iterator = self.dataset.make_one_shot_iterator()
         self.get_batch_data = self.iterator.get_next()
+
 
     @staticmethod
     def visualize_data(image, xyz, uv, uv_vis, k, num_px_left_hand, num_px_right_hand, scoremap,
@@ -104,6 +114,52 @@ class RHD(BaseDataset):
         ax8 = fig.add_subplot('338')
         ax9 = fig.add_subplot('339')
         plt.show()
+
+    @staticmethod
+    def _parse_function_background(imagefilename, maskfilename, keypoint_xyz, keypoint_uv, k):
+        # 数据的基本处理
+        image_size = (320, 320)
+        image_string = tf.read_file(imagefilename)
+        image_decoded = tf.image.decode_png(image_string)
+        image_decoded.set_shape([image_size[0], image_size[0], 3])
+        image = tf.cast(image_decoded, tf.float32)
+        image = image / 255.0 - 0.5
+
+        mask_string = tf.read_file(maskfilename)
+        mask_decoded = tf.image.decode_png(mask_string)
+        hand_parts_mask = tf.cast(mask_decoded, tf.int32)
+        hand_parts_mask.set_shape([image_size[0], image_size[0], 1])
+
+        # general parameters
+        crop_size = 32
+        hue_aug = True
+        hue_aug_max = 0.1
+
+        if hue_aug:
+            image = tf.image.random_hue(image, hue_aug_max)
+
+        # 数据的高级处理
+        #（3）寻找no hand图片
+
+        one_map, zero_map = tf.ones_like(hand_parts_mask), tf.zeros_like(hand_parts_mask)
+        no_hand_mask = tf.less(hand_parts_mask, one_map*2)
+        no_hand_mask = tf.stack([no_hand_mask[:, :, 0], no_hand_mask[:, :, 0], no_hand_mask[:, :, 0]], 2)
+
+        rgb_mean = tf.reduce_mean(image, axis=0)
+        rgb_mean = tf.reduce_mean(rgb_mean, axis=0)
+
+        back_image = tf.ones_like(image)
+        back_image = tf.stack([back_image[:, :, 0]*rgb_mean[0], back_image[:, :, 1]*rgb_mean[1], back_image[:, :, 2]*rgb_mean[2]], 2)
+        image_nohand = tf.where(no_hand_mask, image, back_image)
+        image_nohand1 = tf.random_crop(image_nohand, [crop_size, crop_size, 3])
+        image_nohand2 = tf.random_crop(image_nohand, [crop_size, crop_size, 3])
+
+        # return image, keypoint_xyz21, keypoint_uv21, scoremap,
+        #  keypoint_vis21, k, num_px_left_hand, num_px_right_hand, \
+        #        image_crop_comb, hand_motion, image_crop_comb2, scoremap1, scoremap2
+        return image, tf.zeros([21,3], dtype=tf.float32), tf.zeros([21,2], dtype=tf.float32), tf.zeros([320,320,5], dtype=tf.float32),\
+               tf.zeros([21], dtype=tf.bool), tf.zeros([3,3], dtype=tf.float32), tf.zeros([], dtype=tf.int32), tf.zeros([], dtype=tf.int32),\
+               image_nohand1, tf.zeros([4], dtype=tf.float32), image_nohand2, tf.zeros([32,32,5], dtype=tf.float32),tf.zeros([32,32,5], dtype=tf.float32)
 
     @staticmethod
     def _parse_function(imagefilename, maskfilename, keypoint_xyz, keypoint_uv, k):
@@ -503,13 +559,18 @@ class RHD(BaseDataset):
 
         return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2
 
-# dataset_RHD = RHD()
-# with tf.Session() as sess:
-#
-#     for i in tqdm(range(dataset_RHD.example_num)):
-#         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \ 0~7
-#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 \8~12
-#             = sess.run(dataset_RHD.get_batch_data)
-#
-#         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-#                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
+dataset_RHD = RHD()
+with tf.Session() as sess:
+
+    for i in tqdm(range(dataset_RHD.example_num)):
+        image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
+        image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_data)
+
+        RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+                           image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
+
+        image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
+        image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_back_data)
+
+        RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+                           image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
