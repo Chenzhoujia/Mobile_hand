@@ -550,19 +550,19 @@ class RHD(BaseDataset):
 
 
         return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2
-
-dataset_RHD = RHD()
-with tf.Session() as sess:
-
-    for i in tqdm(range(dataset_RHD.example_num)):
-        image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-        image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_data)
-
-        RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-                           image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
-
-        # image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-        # image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_back_data)
-        #
-        # RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-        #                    image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
+#
+# dataset_RHD = RHD()
+# with tf.Session() as sess:
+#
+#     for i in tqdm(range(dataset_RHD.example_num)):
+#         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
+#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_data)
+#
+#         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+#                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
+#
+#         # image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
+#         # image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_back_data)
+#         #
+#         # RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+#         #                    image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
