@@ -21,7 +21,7 @@ ops = NetworkOps
 def upsample(inputs, factor, name):
     return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor],
                                     name=name)
-def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion,scoremap1,scoremap2, reuse_variables=None):
+def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion,scoremap1,scoremap2,is_loss1,is_loss2, reuse_variables=None):
     losses = []
 
     # 叠加在batch上重用特征提取网络
@@ -34,15 +34,41 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
     # 计算一个scoremap的loss
     scoremap12 = tf.concat([scoremap1, scoremap2], 0)
     scoremap12 = tf.reduce_sum(scoremap12, axis=-1)
+    one_scoremap12 = tf.ones_like(scoremap12)
+    scoremap12 = tf.where(scoremap12 >1, x=one_scoremap12, y=scoremap12)
     scoremap12 = tf.expand_dims(scoremap12, axis=-1)
     scoremap12.set_shape([batchsize * 4, 32, 32, 1])            #hand1 back1 hand2 back2
+
+    is_loss12 = tf.concat([is_loss1, is_loss2], 0)
+    is_loss12 = tf.expand_dims(is_loss12, axis=-1)
+    is_loss12.set_shape([batchsize * 4, 1])
+
     loss_scoremap = 0
+    loss_is_loss = 0
     for loss_i in range(len(pred_heatmaps_all12)):
+        # 计算 isloss，用softmax计算 0~1}
+        is_loss_s = pred_heatmaps_all12[loss_i].get_shape().as_list()
+        pre_is_loss = tf.reshape(pred_heatmaps_all12[loss_i], [is_loss_s[0], -1])  # this is Bx16*16*1
+        out_chan_list = [32, 16, 8, 1]
+        for i, out_chan in enumerate(out_chan_list):
+            pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (loss_i, i), out_chan=out_chan, trainable=True)#(128,1)
+        pre_is_loss = tf.nn.softmax(pre_is_loss)
+        loss_is_loss += tf.nn.l2_loss(pre_is_loss-is_loss12)
+
+        # 计算热度图
         scale = 2
-        tmp = upsample(pred_heatmaps_all12[loss_i], scale, name="upsample_for_hotmap_loss_%d" % loss_i)
-        #loss_scoremap += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=tmp, labels=scoremap12))
-        loss_scoremap += tf.nn.l2_loss(tmp-scoremap12)
-    loss_scoremap=loss_scoremap/32.0/32.0/32.0
+        pred_heatmaps_tmp = upsample(pred_heatmaps_all12[loss_i], scale, name="upsample_for_hotmap_loss_%d" % loss_i)
+        one_tmp = tf.ones_like(pred_heatmaps_tmp)
+        pred_heatmaps_tmp = tf.where(pred_heatmaps_tmp > 1, x=one_tmp, y=pred_heatmaps_tmp)
+
+        #用is loss 修正热度图
+        pred_heatmaps_tmp = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=-1), axis=-1)*pred_heatmaps_tmp
+        #pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
+        #loss_scoremap += -tf.reduce_mean(scoremap12 * tf.log(pred_heatmaps_tmp))
+        #loss_scoremap += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=pred_heatmaps_tmp, labels=scoremap12))
+        loss_scoremap += tf.nn.l2_loss(pred_heatmaps_tmp-scoremap12)
+    loss_is_loss = loss_is_loss/32.0
+    loss_scoremap = loss_scoremap/32.0/32.0/32.0
     diffmap = []
     for batch_i in range(len(pred_heatmaps_all12)):   #hand1 back1 hand2 back2
         diffmap.append(pred_heatmaps_all12[batch_i][0:batchsize*2]-pred_heatmaps_all12[batch_i][batchsize*2:batchsize*4])
@@ -81,13 +107,13 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         loss_l2x = tf.nn.l2_loss(hand_motion[:, 1] - ux[:, 0], name='lossx_heatmap_stage%d' % idx)
         loss_l2y = tf.nn.l2_loss(hand_motion[:, 2] - uy[:, 0], name='lossy_heatmap_stage%d' % idx)
         loss_l2z = tf.nn.l2_loss(hand_motion[:, 3] - uz[:, 0], name='lossz_heatmap_stage%d' % idx)
-        losses.append(loss_l2x+loss_l2y+loss_l2r*0.1+loss_l2z*0.01)
+        losses.append(loss_l2x+loss_l2y+loss_l2r*0.01+loss_l2z*0.01)
     ufxuz = tf.concat(values=[ur, ux, uy, uz], axis=1, name='fxuz')
 
     total_loss = tf.reduce_sum(losses) / batchsize
     alph = 0.5
-    total_loss = alph*loss_scoremap + (1-alph)*total_loss
-    return total_loss, alph*loss_scoremap, ur, ux, uy, uz, ufxuz, tmp
+    total_loss =(1-alph)*total_loss + alph*loss_scoremap + loss_is_loss
+    return total_loss, alph*loss_scoremap, ur, ux, uy, uz, ufxuz, pred_heatmaps_tmp, pre_is_loss, loss_is_loss, is_loss12
 
 
 def average_gradients(tower_grads):
@@ -168,6 +194,9 @@ def main(argv=None):
                     hand_motion = batch_data_all[9]
                     scoremap1 = batch_data_all[11]
                     scoremap2 = batch_data_all[12]
+                    is_loss1 = batch_data_all[13]
+                    is_loss2 = batch_data_all[14]
+
 
                     batch_data_all_back = dataset_RHD.get_batch_back_data
                     input_image1_back = batch_data_all_back[8]
@@ -175,15 +204,20 @@ def main(argv=None):
                     hand_motion_back = batch_data_all_back[9]
                     scoremap1_back = batch_data_all_back[11]
                     scoremap2_back = batch_data_all_back[12]
+                    is_loss1_back = batch_data_all_back[13]
+                    is_loss2_back = batch_data_all_back[14]
 
                     input_image1 = tf.concat([input_image1, input_image1_back], 0) #第一个batch的维度 hand1 back1
                     input_image2 = tf.concat([input_image2, input_image2_back], 0)
                     hand_motion = tf.concat([hand_motion, hand_motion_back], 0)#第一个batch的维度 hand12 back12
                     scoremap1 = tf.concat([scoremap1, scoremap1_back], 0)
                     scoremap2 = tf.concat([scoremap2, scoremap2_back], 0)
+                    is_loss1 = tf.concat([is_loss1, is_loss1_back], 0)
+                    is_loss2 = tf.concat([is_loss2, is_loss2_back], 0)
 
-                    loss, loss_scoremap, ur, ux, uy, uz, ufxuz, preheat = get_loss_and_output(params['model'], params['batchsize'],
-                                    input_image1, input_image2, hand_motion, scoremap1,scoremap2,reuse_variable)
+                    loss, loss_scoremap, ur, ux, uy, uz, ufxuz, preheat, pre_is_loss, loss_is_loss, is_loss12\
+                        = get_loss_and_output(params['model'], params['batchsize'],
+                                    input_image1, input_image2, hand_motion, scoremap1,scoremap2,is_loss1,is_loss2,reuse_variable)
 
                     loss_all = loss
                     grads = opt.compute_gradients(loss_all)
@@ -221,7 +255,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-500'
+            model_name = '/model-35'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
@@ -233,9 +267,9 @@ def main(argv=None):
                 _, loss_value = sess.run([train_op, loss])
                 if step % params['per_saved_model_step'] == 0:
                     valid_loss_value, valid_scoremap_loss, valid_input_image1, valid_input_image2, valid_hand_motion, \
-                    ur_v, ux_v, uy_v, uz_v, preheat_v, scoremap1_v, scoremap2_v = sess.run(
+                    ur_v, ux_v, uy_v, uz_v, preheat_v, scoremap1_v, scoremap2_v, pre_is_loss_v, loss_is_loss_v, is_loss12_v = sess.run(
                         [loss, loss_scoremap, input_image1, input_image2, hand_motion,
-                         ur, ux, uy, uz, preheat, scoremap1, scoremap2])
+                         ur, ux, uy, uz, preheat, scoremap1, scoremap2, pre_is_loss, loss_is_loss, is_loss12])
 
                     valid_input_image1 = (valid_input_image1 + 0.5) * 255
                     valid_input_image1 = valid_input_image1.astype(np.int16)
@@ -248,28 +282,39 @@ def main(argv=None):
                     ax1 = fig.add_subplot(3,4,1)
                     ax1.imshow(valid_input_image1[0, :, :, :])#第一个batch的维度 hand1(0~31) back1(32~63)
                     ax1.axis('off')
+                    ax1.set_title(str(is_loss12_v[0]))#hand1 back1 hand2 back2
                     ax2 = fig.add_subplot(3,4,2)
                     ax2.imshow(valid_input_image2[0, :, :, :])#第一个batch的维度 hand2 back2
                     ax2.axis('off')
+                    ax2.set_title(str(is_loss12_v[64]))
                     ax3 = fig.add_subplot(3,4,3)
                     ax3.imshow(valid_input_image1[32, :, :, :])#第一个batch的维度 hand1 back1
                     ax3.axis('off')
+                    ax3.set_title(str(is_loss12_v[32]))
                     ax4 = fig.add_subplot(3,4,4)
                     ax4.imshow(valid_input_image2[32, :, :, :])#第一个batch的维度 hand2 back2
                     ax4.axis('off')
+                    ax4.set_title(str(is_loss12_v[96]))
+
 
                     ax5 = fig.add_subplot(3,4,5)
                     ax5.imshow(np.sum(scoremap1_v[0], axis=-1))#第一个batch的维度 hand1(0~31) back1(32~63)
                     ax5.axis('off')
+                    ax5.set_title(str(pre_is_loss_v[0]))  # hand1 back1 hand2 back2
                     ax6 = fig.add_subplot(3,4,6)
                     ax6.imshow(np.sum(scoremap2_v[0], axis=-1))#第一个batch的维度 hand2 back2
                     ax6.axis('off')
+                    ax6.set_title(str(pre_is_loss_v[64]))
                     ax7 = fig.add_subplot(3,4,7)
                     ax7.imshow(np.sum(scoremap1_v[32], axis=-1))#第一个batch的维度 hand1 back1
                     ax7.axis('off')
+                    ax7.set_title(str(pre_is_loss_v[32]))
                     ax8 = fig.add_subplot(3,4,8)
                     ax8.imshow(np.sum(scoremap2_v[32], axis=-1))#第一个batch的维度 hand2 back2
                     ax8.axis('off')
+                    ax8.set_title(str(pre_is_loss_v[96]))
+
+
                     ax9 = fig.add_subplot(3,4,9)
                     ax9.imshow(np.sum(preheat_v[0], axis=-1))#hand1 back1 hand2 back2
                     ax9.axis('off')
@@ -302,7 +347,8 @@ def main(argv=None):
                     ax15.grid(True)
                     plt.savefig(os.path.join(params['logpath'], training_name) + "/" + str(step).zfill(10) + "_.png")
 
-                    print("motion loss: "+str(valid_loss_value-valid_scoremap_loss)+" scoremap loss: "+str(valid_scoremap_loss))
+                    print("motion loss: "+str(valid_loss_value-valid_scoremap_loss)+" scoremap loss: "+str(valid_scoremap_loss)
+                          + "loss_is_loss_v"+str(loss_is_loss_v))
 
 
                 # save model

@@ -20,7 +20,7 @@ def upsample(inputs, factor, name):
                                     name=name)
 if __name__ == '__main__':
 
-    model_name = 'model-11500'
+    model_name = 'model-39000'
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
     parser.add_argument('--model', type=str, default='mv2_hourglass', help='')

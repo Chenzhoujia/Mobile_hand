@@ -60,7 +60,7 @@ class RHD(BaseDataset):
 
     @staticmethod
     def visualize_data(image, xyz, uv, uv_vis, k, num_px_left_hand, num_px_right_hand, scoremap,
-                       image_crop_tip, crop_size_best,  image_nohand, scoremap_1, scoremap_2):
+                       image_crop_tip, crop_size_best,  image_nohand, scoremap_1, scoremap_2,is_loss1,is_loss2):
         # get info from annotation dictionary
 
         image = (image + 0.5) * 255
@@ -112,7 +112,10 @@ class RHD(BaseDataset):
         ax4.set_ylabel('y')
         ax4.set_zlabel('z')
         ax8 = fig.add_subplot('338')
+        ax8.set_title(str(is_loss1))
+
         ax9 = fig.add_subplot('339')
+        ax9.set_title(str(is_loss2))
         plt.show()
 
     @staticmethod
@@ -159,7 +162,8 @@ class RHD(BaseDataset):
         #        image_crop_comb, hand_motion, image_crop_comb2, scoremap1, scoremap2
         return image, tf.zeros([21,3], dtype=tf.float32), tf.zeros([21,2], dtype=tf.float32), tf.zeros([320,320,5], dtype=tf.float32),\
                tf.zeros([21], dtype=tf.bool), tf.zeros([3,3], dtype=tf.float32), tf.zeros([], dtype=tf.int32), tf.zeros([], dtype=tf.int32),\
-               image_nohand1, tf.zeros([4], dtype=tf.float32), image_nohand2, tf.zeros([32,32,5], dtype=tf.float32),tf.zeros([32,32,5], dtype=tf.float32)
+               image_nohand1, tf.zeros([4], dtype=tf.float32), image_nohand2, tf.zeros([32,32,5], dtype=tf.float32),tf.zeros([32,32,5], dtype=tf.float32),\
+               tf.zeros([], dtype=tf.float32), tf.zeros([], dtype=tf.float32)
 
     @staticmethod
     def _parse_function(imagefilename, maskfilename, keypoint_xyz, keypoint_uv, k):
@@ -372,11 +376,11 @@ class RHD(BaseDataset):
         scoremap = tf.concat([tf.expand_dims(scoremap[:,:,1],-1),tf.expand_dims(scoremap[:,:,5],-1)
                               ,tf.expand_dims(scoremap[:,:,9],-1),tf.expand_dims(scoremap[:,:,13],-1)
                               ,tf.expand_dims(scoremap[:, :, 17], -1)], 2)
-        image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2\
+        image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2\
             = RHD._parse_function_furtner(image, keypoint_uv21, hand_parts_mask, scoremap)
 
         return image, keypoint_xyz21, keypoint_uv21, scoremap, keypoint_vis21, k, num_px_left_hand, num_px_right_hand, \
-               image_crop_comb, hand_motion, image_crop_comb2, scoremap1, scoremap2
+               image_crop_comb, hand_motion, image_crop_comb2, scoremap1, scoremap2, is_loss1, is_loss2
 
 
     """
@@ -547,22 +551,27 @@ class RHD(BaseDataset):
                       false_fn=lambda: hand_motion)
         hand_motion = tf.cond(tf.less(x=tf.reduce_sum(scoremap2), y=tf.constant(10.0)), true_fn=lambda: tf.zeros_like(hand_motion),
                       false_fn=lambda: hand_motion)
+        is_loss1 = tf.ones([])
+        is_loss2 = tf.ones([])
+        is_loss1 = tf.cond(tf.less(x=tf.reduce_sum(scoremap), y=tf.constant(10.0)), true_fn=lambda: tf.zeros_like(is_loss1),
+                      false_fn=lambda: is_loss1)
+        is_loss2 = tf.cond(tf.less(x=tf.reduce_sum(scoremap2), y=tf.constant(10.0)), true_fn=lambda: tf.zeros_like(is_loss2),
+                      false_fn=lambda: is_loss2)
 
-
-        return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2
+        return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2, is_loss1, is_loss2
 #
 # dataset_RHD = RHD()
 # with tf.Session() as sess:
 #
 #     for i in tqdm(range(dataset_RHD.example_num)):
 #         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_data)
+#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2 = sess.run(dataset_RHD.get_batch_data)
 #
 #         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-#                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
+#                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0], is_loss1[0], is_loss2[0])
 #
-#         # image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-#         # image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2 = sess.run(dataset_RHD.get_batch_back_data)
-#         #
-#         # RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-#         #                    image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0])
+#         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
+#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2 = sess.run(dataset_RHD.get_batch_back_data)
+#
+#         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
+#                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0], is_loss1[0], is_loss2[0])
