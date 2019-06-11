@@ -67,8 +67,8 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         #loss_scoremap += -tf.reduce_mean(scoremap12 * tf.log(pred_heatmaps_tmp))
         #loss_scoremap += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=pred_heatmaps_tmp, labels=scoremap12))
         loss_scoremap += tf.nn.l2_loss(pred_heatmaps_tmp-scoremap12)
-    loss_is_loss = loss_is_loss/32.0
-    loss_scoremap = loss_scoremap/32.0/32.0/32.0
+    loss_is_loss = loss_is_loss/32.0/4.0
+    loss_scoremap = loss_scoremap/32.0/4.0/32.0/32.0
     diffmap = []
     for batch_i in range(len(pred_heatmaps_all12)):   #hand1 back1 hand2 back2
         diffmap.append(pred_heatmaps_all12[batch_i][0:batchsize*2]-pred_heatmaps_all12[batch_i][batchsize*2:batchsize*4])
@@ -110,10 +110,10 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         losses.append(loss_l2x+loss_l2y+loss_l2r*0.01+loss_l2z*0.01)
     ufxuz = tf.concat(values=[ur, ux, uy, uz], axis=1, name='fxuz')
 
-    total_loss = tf.reduce_sum(losses) / batchsize
+    motion_loss = tf.reduce_sum(losses) / batchsize/2.0
     alph = 0.5
-    total_loss =(1-alph)*total_loss + alph*loss_scoremap + loss_is_loss
-    return total_loss, alph*loss_scoremap, ur, ux, uy, uz, ufxuz, pred_heatmaps_tmp, pre_is_loss, loss_is_loss, is_loss12
+    total_loss =motion_loss + loss_scoremap + loss_is_loss
+    return total_loss, loss_scoremap, ur, ux, uy, uz, ufxuz, pred_heatmaps_tmp, pre_is_loss, loss_is_loss, is_loss12
 
 
 def average_gradients(tower_grads):
@@ -255,7 +255,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-35'
+            model_name = '/model-500'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
