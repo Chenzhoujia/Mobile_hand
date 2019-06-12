@@ -52,7 +52,13 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         out_chan_list = [32, 16, 8, 1]
         for i, out_chan in enumerate(out_chan_list):
             pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (loss_i, i), out_chan=out_chan, trainable=True)#(128,1)
-        pre_is_loss = tf.nn.softmax(pre_is_loss)
+        #将pre_is_loss约束在01之间
+        one_pre_is_loss = tf.ones_like(pre_is_loss)
+        zero_pre_is_loss = tf.zeros_like(pre_is_loss)
+        pre_is_loss = tf.where(pre_is_loss > 1, x=one_pre_is_loss, y=pre_is_loss)
+        pre_is_loss = tf.where(pre_is_loss < 0, x=zero_pre_is_loss, y=pre_is_loss)
+
+        #pre_is_loss = tf.nn.softmax(pre_is_loss)
         loss_is_loss += tf.nn.l2_loss(pre_is_loss-is_loss12)
 
         # 计算热度图
@@ -107,13 +113,14 @@ def get_loss_and_output(model, batchsize, input_image1,input_image2, hand_motion
         loss_l2x = tf.nn.l2_loss(hand_motion[:, 1] - ux[:, 0], name='lossx_heatmap_stage%d' % idx)
         loss_l2y = tf.nn.l2_loss(hand_motion[:, 2] - uy[:, 0], name='lossy_heatmap_stage%d' % idx)
         loss_l2z = tf.nn.l2_loss(hand_motion[:, 3] - uz[:, 0], name='lossz_heatmap_stage%d' % idx)
-        losses.append(loss_l2x+loss_l2y+loss_l2r*0.01+loss_l2z*0.01)
+        losses.append(loss_l2x+loss_l2y+loss_l2r*0.001+loss_l2z*0.001)
     ufxuz = tf.concat(values=[ur, ux, uy, uz], axis=1, name='fxuz')
 
-    motion_loss = tf.reduce_sum(losses) / batchsize/2.0
+    motion_loss = tf.reduce_sum(losses) / batchsize/ 2.0
     alph = 0.5
     total_loss =motion_loss + loss_scoremap + loss_is_loss
-    return total_loss, loss_scoremap, ur, ux, uy, uz, ufxuz, pred_heatmaps_tmp, pre_is_loss, loss_is_loss, is_loss12
+    return total_loss, motion_loss, loss_scoremap, loss_is_loss,\
+           ur, ux, uy, uz, ufxuz, pred_heatmaps_tmp, pre_is_loss, is_loss12
 
 
 def average_gradients(tower_grads):
@@ -214,8 +221,12 @@ def main(argv=None):
                     scoremap2 = tf.concat([scoremap2, scoremap2_back], 0)
                     is_loss1 = tf.concat([is_loss1, is_loss1_back], 0)
                     is_loss2 = tf.concat([is_loss2, is_loss2_back], 0)
-
-                    loss, loss_scoremap, ur, ux, uy, uz, ufxuz, preheat, pre_is_loss, loss_is_loss, is_loss12\
+                    """
+                    total_loss, motion_loss*0.00001, loss_scoremap*0.001, loss_is_loss,\
+                               ur, ux, uy, uz, ufxuz, pred_heatmaps_tmp, pre_is_loss, is_loss12
+                    """
+                    loss, motion_loss, loss_scoremap, loss_is_loss,\
+                    ur, ux, uy, uz, ufxuz, preheat, pre_is_loss, is_loss12\
                         = get_loss_and_output(params['model'], params['batchsize'],
                                     input_image1, input_image2, hand_motion, scoremap1,scoremap2,is_loss1,is_loss2,reuse_variable)
 
@@ -255,7 +266,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-500'
+            model_name = '/model-2000'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
@@ -265,11 +276,11 @@ def main(argv=None):
             print("Start training...")
             for step in tqdm(range(total_step_num)):
                 _, loss_value = sess.run([train_op, loss])
-                if step % params['per_saved_model_step'] == 0:
-                    valid_loss_value, valid_scoremap_loss, valid_input_image1, valid_input_image2, valid_hand_motion, \
-                    ur_v, ux_v, uy_v, uz_v, preheat_v, scoremap1_v, scoremap2_v, pre_is_loss_v, loss_is_loss_v, is_loss12_v = sess.run(
-                        [loss, loss_scoremap, input_image1, input_image2, hand_motion,
-                         ur, ux, uy, uz, preheat, scoremap1, scoremap2, pre_is_loss, loss_is_loss, is_loss12])
+                if step % params['per_update_tensorboard_step'] == 0:
+                    valid_loss_value,valid_motion_loss, valid_scoremap_loss,loss_is_loss_v, valid_input_image1, valid_input_image2, valid_hand_motion, \
+                    ur_v, ux_v, uy_v, uz_v, preheat_v, scoremap1_v, scoremap2_v, pre_is_loss_v,  is_loss12_v = sess.run(
+                        [loss,motion_loss, loss_scoremap,loss_is_loss, input_image1, input_image2, hand_motion,
+                         ur, ux, uy, uz, preheat, scoremap1, scoremap2, pre_is_loss, is_loss12])
 
                     valid_input_image1 = (valid_input_image1 + 0.5) * 255
                     valid_input_image1 = valid_input_image1.astype(np.int16)
@@ -347,11 +358,11 @@ def main(argv=None):
                     ax15.grid(True)
                     plt.savefig(os.path.join(params['logpath'], training_name) + "/" + str(step).zfill(10) + "_.png")
 
-                    print("motion loss: "+str(valid_loss_value-valid_scoremap_loss)+" scoremap loss: "+str(valid_scoremap_loss)
-                          + "loss_is_loss_v"+str(loss_is_loss_v))
+                    print("loss:"+str(valid_loss_value), " motion_loss:"+str(valid_motion_loss)+" scoremap_loss:"
+                          +str(valid_scoremap_loss), " is_loss:"+str(loss_is_loss_v))
 
 
-                # save model
+                    # save model
                 if step % params['per_saved_model_step'] == 0:
                     saver.save(sess, os.path.join(checkpoint_path, 'model'), global_step=step)
 
