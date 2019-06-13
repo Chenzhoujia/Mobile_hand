@@ -11,6 +11,8 @@ import matplotlib.image
 import time
 from mpl_toolkits.mplot3d import Axes3D
 import cv2, os
+
+from dataset_interface.RHD import RHD
 from src import network_mv2_hourglass
 from src.networks import get_network
 from src.general import NetworkOps
@@ -38,13 +40,40 @@ if __name__ == '__main__':
     i = 0
     batchsize = 1
     with tf.Graph().as_default(), tf.device("/cpu:0"):
+        dataset_RHD = RHD(batchnum=batchsize)
+
         with tf.device("/gpu:%d" % i):
             with tf.name_scope("GPU_%d" % i):
-                input_node = tf.placeholder(tf.float32, shape=[2, args.size, args.size, 3], name="input_image")
+                #input_node = tf.placeholder(tf.float32, shape=[2, args.size, args.size, 3], name="input_image")
+
+                # input_image, keypoint_xyz, keypoint_uv, input_heat, keypoint_vis, k, num_px_left_hand, num_px_right_hand \
+                batch_data_all = dataset_RHD.get_batch_data
+                input_image1 = batch_data_all[8]
+                input_image2 = batch_data_all[10]
+                hand_motion = batch_data_all[9]
+                scoremap1 = batch_data_all[11]
+                scoremap2 = batch_data_all[12]
+                is_loss1 = batch_data_all[13]
+                is_loss2 = batch_data_all[14]
+
+                batch_data_all_back = dataset_RHD.coco_get_batch_back_data
+                input_image1_back = batch_data_all_back[8]
+                input_image2_back = batch_data_all_back[10]
+                hand_motion_back = batch_data_all_back[9]
+                scoremap1_back = batch_data_all_back[11]
+                scoremap2_back = batch_data_all_back[12]
+                is_loss1_back = batch_data_all_back[13]
+                is_loss2_back = batch_data_all_back[14]
+
+                input_image1 = tf.concat([input_image1, input_image1_back], 0)  # 第一个batch的维度 hand1 back1
+                input_image2 = tf.concat([input_image2, input_image2_back], 0)
+                input_image12 = tf.concat([input_image1, input_image2], 0)  # hand1 back1 hand2 back2
+                input_image12.set_shape([batchsize * 4, 32, 32, 3])
+
                 with tf.variable_scope(tf.get_variable_scope(), reuse=False):
                     network_mv2_hourglass.N_KPOINTS = 1
-                    _, pred_heatmaps_all12 = get_network('mv2_hourglass', input_node, True)
-                diffmap = []
+                    _, pred_heatmaps_all12 = get_network('mv2_hourglass', input_image12, True)
+
                 for batch_i in range(len(pred_heatmaps_all12)):
                     # 计算 isloss，用softmax计算 0~1}
                     is_loss_s = pred_heatmaps_all12[batch_i].get_shape().as_list()
@@ -59,15 +88,17 @@ if __name__ == '__main__':
                     pre_is_loss = tf.where(pre_is_loss > 1, x=one_pre_is_loss, y=pre_is_loss)
                     pre_is_loss = tf.where(pre_is_loss < 0, x=zero_pre_is_loss, y=pre_is_loss)
 
+                    pred_heatmaps_tmp = upsample(pred_heatmaps_all12[batch_i], 2, name="upsample_for_hotmap_loss_%d" % batch_i)
+                    one_tmp = tf.ones_like(pred_heatmaps_tmp)
+                    pred_heatmaps_tmp = tf.where(pred_heatmaps_tmp > 1, x=one_tmp, y=pred_heatmaps_tmp)
+                    # 用is loss 修正热度图
+                    pred_heatmaps_tmp_ = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=-1), axis=-1) * pred_heatmaps_tmp
+
+                diffmap = []
+                for batch_i in range(len(pred_heatmaps_all12)):  # hand1 back1 hand2 back2
                     diffmap.append(
                         pred_heatmaps_all12[batch_i][0:batchsize] - pred_heatmaps_all12[batch_i][
                                                                     batchsize:batchsize * 2])
-                preheat = upsample(pred_heatmaps_all12[-1], 2, name="upsample_for_hotmap_loss_%d" % batch_i)
-                one_tmp = tf.ones_like(preheat)
-                pred_heatmaps_tmp = tf.where(preheat > 1, x=one_tmp, y=preheat)
-                # 用is loss 修正热度图
-                pred_heatmaps_tmp = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=-1), axis=-1) * pred_heatmaps_tmp
-
 
                 # diffmap_t 将4个阶段的输出，在通道数上整合
                 for batch_i in range(len(diffmap)):
@@ -122,35 +153,38 @@ if __name__ == '__main__':
             centerx = 160
             centery = 120
 
-            path = "/home/chen/Documents/Mobile_hand/experiments/varify/image/set1/"
+            path = "/media/chen/4CBEA7F1BEA7D1AE/VR715/"
 
-            for i in range(142):
-                image_raw1_crop = matplotlib.image.imread(path + str(step).zfill(5) + '_1.jpg')
-                image_raw2_crop = matplotlib.image.imread(path + str(step).zfill(5) + '_2.jpg')
-
-            # while(True):
-            #     # 获取相隔0.1s的两帧图片，做根据初始化或者网络输出结果，绘制矩形框，进行剪裁，reshape
-            #     _,image_raw1 = cap.read()
-            #     image_raw1 = scipy.misc.imresize(image_raw1, (240, 320))
-            #     time.sleep(0.1)
-            #     _,image_raw2 = cap.read()
-            #     image_raw2 = scipy.misc.imresize(image_raw2, (240, 320))
-            #         # 剪切 resize
+            for i in range(500):
+            #     image_raw1_crop = matplotlib.image.imread(path + str(step*2).zfill(5) + '.jpg')
+            #     image_raw2_crop = matplotlib.image.imread(path + str(step*2+1).zfill(5) + '.jpg')
+            #     image_raw1_crop = image_raw1_crop.astype('float') / 255.0 - 0.5
+            #     image_raw1_crop = image_raw1_crop[centerx:centerx+32, centery:centery+32]
             #
-            #     size = 24
-            #     image_raw1_crop = np.array(image_raw1[centery - size: centery + size, centerx - size: centerx + size])
-            #     image_raw2_crop = np.array(image_raw2[centery - size: centery + size, centerx - size: centerx + size])
-            #     image_raw1_crop = cv2.resize(image_raw1_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
-            #     image_raw2_crop = cv2.resize(image_raw2_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
-            #     first_point = (centerx-size, centery-size)
-            #     last_point = (centerx+size, centery+size)
-            #     cv2.rectangle(image_raw1, first_point, last_point, (0, 255, 0), 2)
-            #     cv2.rectangle(image_raw2, first_point, last_point, (0, 255, 0), 2)
+            #     image_raw2_crop = image_raw2_crop.astype('float') / 255.0 - 0.5
+            #     image_raw2_crop = image_raw2_crop[centerx:centerx + 32, centery:centery + 32]
+            # # while(True):
+            # #     # 获取相隔0.1s的两帧图片，做根据初始化或者网络输出结果，绘制矩形框，进行剪裁，reshape
+            # #     _,image_raw1 = cap.read()
+            # #     image_raw1 = scipy.misc.imresize(image_raw1, (240, 320))
+            # #     time.sleep(0.1)
+            # #     _,image_raw2 = cap.read()
+            # #     image_raw2 = scipy.misc.imresize(image_raw2, (240, 320))
+            # #         # 剪切 resize
+            # #
+            # #     size = 24
+            # #     image_raw1_crop = np.array(image_raw1[centery - size: centery + size, centerx - size: centerx + size])
+            # #     image_raw2_crop = np.array(image_raw2[centery - size: centery + size, centerx - size: centerx + size])
+            # #     image_raw1_crop = cv2.resize(image_raw1_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
+            # #     image_raw2_crop = cv2.resize(image_raw2_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
+            # #     first_point = (centerx-size, centery-size)
+            # #     last_point = (centerx+size, centery+size)
+            # #     cv2.rectangle(image_raw1, first_point, last_point, (0, 255, 0), 2)
+            # #     cv2.rectangle(image_raw2, first_point, last_point, (0, 255, 0), 2)
+            #
+            #     image_raw12_crop = np.concatenate((image_raw1_crop[np.newaxis, :], image_raw2_crop[np.newaxis, :]), axis=0)
 
-                image_raw12_crop = np.concatenate((image_raw1_crop[np.newaxis, :], image_raw2_crop[np.newaxis, :]), axis=0)
-                image_raw12_crop = image_raw12_crop.astype('float') / 255.0 - 0.5
-
-                preheat_v, pre_is_loss_, output_node_ufxuz_ = sess.run([pred_heatmaps_tmp, pre_is_loss, output_node_ufxuz], feed_dict={input_node: image_raw12_crop})
+                input_image12_v ,preheat_v, pre_is_loss_v, output_node_ufxuz_ = sess.run([input_image12, pred_heatmaps_tmp, pre_is_loss, output_node_ufxuz])#, feed_dict={input_node: image_raw12_crop})
                 output_node_ufxuz_ = output_node_ufxuz_[0]
                 ur = round(output_node_ufxuz_[0], 3)
                 ux = round(output_node_ufxuz_[1], 3)
@@ -172,23 +206,47 @@ if __name__ == '__main__':
                 # visualize
                 fig = plt.figure(1)
                 fig.clear()
-                ax1 = fig.add_subplot(321)
-                ax2 = fig.add_subplot(322)
-                ax3 = fig.add_subplot(323)
-                ax4 = fig.add_subplot(324)
-                ax5 = fig.add_subplot(325)
+                ax1 = fig.add_subplot(241)
+                ax2 = fig.add_subplot(242)
+                ax3 = fig.add_subplot(243)
+                ax4 = fig.add_subplot(244)
+                ax5 = fig.add_subplot(245)
+                ax6 = fig.add_subplot(246)
+                ax7 = fig.add_subplot(247)
+                ax8 = fig.add_subplot(248)
+
+
+                image_raw1_crop = (input_image12_v[0,:,:,:] + 0.5) * 255
+                image_raw1_crop = image_raw1_crop.astype(np.int16)
+                image_raw2_crop = (input_image12_v[1,:,:,:] + 0.5) * 255
+                image_raw2_crop = image_raw2_crop.astype(np.int16)
+                image_raw3_crop = (input_image12_v[2,:,:,:] + 0.5) * 255
+                image_raw3_crop = image_raw3_crop.astype(np.int16)
+                image_raw4_crop = (input_image12_v[3,:,:,:] + 0.5) * 255
+                image_raw4_crop = image_raw4_crop.astype(np.int16)
 
                 ax1.imshow(image_raw1_crop)
                 ax2.imshow(image_raw2_crop)
-                ax3.imshow(preheat_v[0, :, :, 0])
-                ax3.set_title(str(pre_is_loss_[0]))
-                ax4.imshow(preheat_v[1, :, :, 0])
-                ax4.set_title(str(pre_is_loss_[1]))
+                ax3.imshow(image_raw3_crop)
+                ax4.imshow(image_raw4_crop)
+                ax5.imshow(preheat_v[0, :, :, 0])
+                ax6.imshow(preheat_v[1, :, :, 0])
+                ax7.imshow(preheat_v[2, :, :, 0])
+                ax8.imshow(preheat_v[3, :, :, 0])
+                ax5.set_title(str(pre_is_loss_v[0]))
+                ax6.set_title(str(pre_is_loss_v[1]))
+                ax7.set_title(str(pre_is_loss_v[2]))
+                ax8.set_title(str(pre_is_loss_v[3]))
 
-                ax5.plot([0, ux], [0, uy], label="predict", color='blue')
-                ax5.set_xlim((-1, 1))
-                ax5.set_ylim((1, -1))
-                ax5.grid(True)
+                # ax3.imshow(preheat_v[0, :, :, 0])
+                # ax3.set_title(str(pre_is_loss_[0]))
+                # ax4.imshow(preheat_v[1, :, :, 0])
+                # ax4.set_title(str(pre_is_loss_[1]))
+                #
+                # ax5.plot([0, ux], [0, uy], label="predict", color='blue')
+                # ax5.set_xlim((-1, 1))
+                # ax5.set_ylim((1, -1))
+                # ax5.grid(True)
 
                 plt.savefig("/home/chen/Documents/Mobile_hand/experiments/varify/image/valid_on_cam/"+
                             str(step).zfill(5)+".jpg")

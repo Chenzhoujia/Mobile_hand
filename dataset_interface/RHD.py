@@ -38,9 +38,9 @@ class RHD(BaseDataset):
 
         assert self.example_num == len(anno_all), '标签和样本数量不一致'
         # 创建coco背景数据集
-        coco_imagefilenames = BaseDataset.listdir("/media/chen/4CBEA7F1BEA7D1AE/VR715")
+        coco_imagefilenames = BaseDataset.listdir("/media/chen/4CBEA7F1BEA7D1AE/Download/ai_challenger/train")
         self.coco_imagefilenames = tf.constant(coco_imagefilenames)
-        back_num = 2168#22446
+        back_num = 22446
         coco_dataset_back = tf.data.Dataset.from_tensor_slices((self.coco_imagefilenames, self.maskfilenames[:back_num], self.allxyz[:back_num], self.alluv[:back_num], self.allk[:back_num]))
         coco_dataset_back = coco_dataset_back.map(RHD._parse_function_coco_background)
         coco_dataset_back = coco_dataset_back.repeat()
@@ -185,7 +185,7 @@ class RHD(BaseDataset):
 
         # general parameters
         crop_size = 32
-        hue_aug = True
+        hue_aug = False
         hue_aug_max = 0.1
 
         if hue_aug:
