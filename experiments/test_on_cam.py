@@ -20,7 +20,7 @@ def upsample(inputs, factor, name):
                                     name=name)
 if __name__ == '__main__':
 
-    model_name = 'model-39000'
+    model_name = 'model-29500'
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
     parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
@@ -46,10 +46,29 @@ if __name__ == '__main__':
                     _, pred_heatmaps_all12 = get_network('mv2_hourglass', input_node, True)
                 diffmap = []
                 for batch_i in range(len(pred_heatmaps_all12)):
+                    # 计算 isloss，用softmax计算 0~1}
+                    is_loss_s = pred_heatmaps_all12[batch_i].get_shape().as_list()
+                    pre_is_loss = tf.reshape(pred_heatmaps_all12[batch_i], [is_loss_s[0], -1])  # this is Bx16*16*1
+                    out_chan_list = [32, 16, 8, 1]
+                    for i, out_chan in enumerate(out_chan_list):
+                        pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (batch_i, i),
+                                                               out_chan=out_chan, trainable=True)  # (128,1)
+                    # 将pre_is_loss约束在01之间
+                    one_pre_is_loss = tf.ones_like(pre_is_loss)
+                    zero_pre_is_loss = tf.zeros_like(pre_is_loss)
+                    pre_is_loss = tf.where(pre_is_loss > 1, x=one_pre_is_loss, y=pre_is_loss)
+                    pre_is_loss = tf.where(pre_is_loss < 0, x=zero_pre_is_loss, y=pre_is_loss)
+
                     diffmap.append(
                         pred_heatmaps_all12[batch_i][0:batchsize] - pred_heatmaps_all12[batch_i][
                                                                     batchsize:batchsize * 2])
                 preheat = upsample(pred_heatmaps_all12[-1], 2, name="upsample_for_hotmap_loss_%d" % batch_i)
+                one_tmp = tf.ones_like(preheat)
+                pred_heatmaps_tmp = tf.where(preheat > 1, x=one_tmp, y=preheat)
+                # 用is loss 修正热度图
+                pred_heatmaps_tmp = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=-1), axis=-1) * pred_heatmaps_tmp
+
+
                 # diffmap_t 将4个阶段的输出，在通道数上整合
                 for batch_i in range(len(diffmap)):
                     if batch_i == 0:
@@ -131,7 +150,7 @@ if __name__ == '__main__':
                 image_raw12_crop = np.concatenate((image_raw1_crop[np.newaxis, :], image_raw2_crop[np.newaxis, :]), axis=0)
                 image_raw12_crop = image_raw12_crop.astype('float') / 255.0 - 0.5
 
-                preheat_v, output_node_ufxuz_ = sess.run([preheat, output_node_ufxuz], feed_dict={input_node: image_raw12_crop})
+                preheat_v, pre_is_loss_, output_node_ufxuz_ = sess.run([pred_heatmaps_tmp, pre_is_loss, output_node_ufxuz], feed_dict={input_node: image_raw12_crop})
                 output_node_ufxuz_ = output_node_ufxuz_[0]
                 ur = round(output_node_ufxuz_[0], 3)
                 ux = round(output_node_ufxuz_[1], 3)
@@ -162,7 +181,9 @@ if __name__ == '__main__':
                 ax1.imshow(image_raw1_crop)
                 ax2.imshow(image_raw2_crop)
                 ax3.imshow(preheat_v[0, :, :, 0])
+                ax3.set_title(str(pre_is_loss_[0]))
                 ax4.imshow(preheat_v[1, :, :, 0])
+                ax4.set_title(str(pre_is_loss_[1]))
 
                 ax5.plot([0, ux], [0, uy], label="predict", color='blue')
                 ax5.set_xlim((-1, 1))

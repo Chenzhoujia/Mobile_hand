@@ -37,6 +37,17 @@ class RHD(BaseDataset):
         self.maskfilenames = tf.constant(maskfilenames)
 
         assert self.example_num == len(anno_all), '标签和样本数量不一致'
+        # 创建coco背景数据集
+        coco_imagefilenames = BaseDataset.listdir("/media/chen/4CBEA7F1BEA7D1AE/VR715")
+        self.coco_imagefilenames = tf.constant(coco_imagefilenames)
+        back_num = 2168#22446
+        coco_dataset_back = tf.data.Dataset.from_tensor_slices((self.coco_imagefilenames, self.maskfilenames[:back_num], self.allxyz[:back_num], self.alluv[:back_num], self.allk[:back_num]))
+        coco_dataset_back = coco_dataset_back.map(RHD._parse_function_coco_background)
+        coco_dataset_back = coco_dataset_back.repeat()
+        coco_dataset_back = coco_dataset_back.shuffle(buffer_size=320)
+        self.coco_dataset_back = coco_dataset_back.batch(batchnum)
+        self.coco_iterator_back = self.coco_dataset_back.make_one_shot_iterator()
+        self.coco_get_batch_back_data = self.coco_iterator_back.get_next()
 
         # 创建背景数据集
         dataset_back = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
@@ -164,7 +175,34 @@ class RHD(BaseDataset):
                tf.zeros([21], dtype=tf.bool), tf.zeros([3,3], dtype=tf.float32), tf.zeros([], dtype=tf.int32), tf.zeros([], dtype=tf.int32),\
                image_nohand1, tf.zeros([4], dtype=tf.float32), image_nohand2, tf.zeros([32,32,5], dtype=tf.float32),tf.zeros([32,32,5], dtype=tf.float32),\
                tf.zeros([], dtype=tf.float32), tf.zeros([], dtype=tf.float32)
+    @staticmethod
+    def _parse_function_coco_background(imagefilename, maskfilename, keypoint_xyz, keypoint_uv, k):
+        # 数据的基本处理
+        image_string = tf.read_file(imagefilename)
+        image_decoded = tf.image.decode_png(image_string)
+        image = tf.cast(image_decoded, tf.float32)
+        image = image / 255.0 - 0.5
 
+        # general parameters
+        crop_size = 32
+        hue_aug = True
+        hue_aug_max = 0.1
+
+        if hue_aug:
+            image = tf.image.random_hue(image, hue_aug_max)
+
+        # 数据的高级处理
+        #（3）寻找no hand图片
+        image_nohand1 = tf.random_crop(image, [crop_size, crop_size, 3])
+        image_nohand2 = tf.random_crop(image, [crop_size, crop_size, 3])
+
+        # return image, keypoint_xyz21, keypoint_uv21, scoremap,
+        #  keypoint_vis21, k, num_px_left_hand, num_px_right_hand, \
+        #        image_crop_comb, hand_motion, image_crop_comb2, scoremap1, scoremap2
+        return tf.zeros([320,320,3], dtype=tf.float32), tf.zeros([21,3], dtype=tf.float32), tf.zeros([21,2], dtype=tf.float32), tf.zeros([320,320,5], dtype=tf.float32),\
+               tf.zeros([21], dtype=tf.bool), tf.zeros([3,3], dtype=tf.float32), tf.zeros([], dtype=tf.int32), tf.zeros([], dtype=tf.int32),\
+               image_nohand1, tf.zeros([4], dtype=tf.float32), image_nohand2, tf.zeros([32,32,5], dtype=tf.float32),tf.zeros([32,32,5], dtype=tf.float32),\
+               tf.zeros([], dtype=tf.float32), tf.zeros([], dtype=tf.float32)
     @staticmethod
     def _parse_function(imagefilename, maskfilename, keypoint_xyz, keypoint_uv, k):
         # 数据的基本处理
@@ -559,7 +597,7 @@ class RHD(BaseDataset):
                       false_fn=lambda: is_loss2)
 
         return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2, is_loss1, is_loss2
-#
+
 # dataset_RHD = RHD()
 # with tf.Session() as sess:
 #
@@ -571,7 +609,7 @@ class RHD(BaseDataset):
 #                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0], is_loss1[0], is_loss2[0])
 #
 #         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2 = sess.run(dataset_RHD.get_batch_back_data)
+#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2 = sess.run(dataset_RHD.coco_get_batch_back_data)
 #
 #         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
 #                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0], is_loss1[0], is_loss2[0])
