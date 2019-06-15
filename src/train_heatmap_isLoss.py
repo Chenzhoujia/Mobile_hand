@@ -27,7 +27,7 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_
     # 叠加在batch上重用特征提取网络
     input_image = tf.add(input_image, 0, name='input_image')
     with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
-        network_mv2_hourglass.N_KPOINTS = 1
+        network_mv2_hourglass.N_KPOINTS = 2
         _, pred_heatmaps_all = get_network(model, input_image, True) #第一个batch的维度 hand back
 
     loss_scoremap = 0.0
@@ -36,37 +36,43 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_
         # 计算 isloss，用softmax计算 0~1}
         is_loss_s = pred_heatmaps_all[loss_i].get_shape().as_list()
         pre_is_loss = tf.reshape(pred_heatmaps_all[loss_i], [-1, is_loss_s[1]*is_loss_s[2]*is_loss_s[3]])  # this is Bx16*16*1
-        out_chan_list = [32, 16, 8, 1]
+        out_chan_list = [32, 16, 8, 2]
         for i, out_chan in enumerate(out_chan_list):
             pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (loss_i, i), out_chan=out_chan, trainable=True)#(128,1)
-        #将pre_is_loss约束在01之间
-        one_pre_is_loss = tf.ones_like(pre_is_loss)
-        zero_pre_is_loss = tf.zeros_like(pre_is_loss)
-        pre_is_loss = tf.where(pre_is_loss > 1, x=one_pre_is_loss, y=pre_is_loss)
-        pre_is_loss = tf.where(pre_is_loss < 0, x=zero_pre_is_loss, y=pre_is_loss)
+        #将pre_is_loss [?,2]
+        loss_is_loss += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=pre_is_loss, labels=is_loss))
+        # one_pre_is_loss = tf.ones_like(pre_is_loss)
+        # zero_pre_is_loss = tf.zeros_like(pre_is_loss)
+        # pre_is_loss = tf.where(pre_is_loss > 1, x=one_pre_is_loss, y=pre_is_loss)
+        # pre_is_loss = tf.where(pre_is_loss < 0, x=zero_pre_is_loss, y=pre_is_loss)
 
         #pre_is_loss = tf.nn.softmax(pre_is_loss)
-        loss_is_loss += tf.nn.l2_loss(pre_is_loss-is_loss)
+        # loss_is_loss += tf.nn.l2_loss(pre_is_loss-is_loss)
 
         # 计算热度图
         scale = 2
         pred_heatmaps_tmp = upsample(pred_heatmaps_all[loss_i], scale, name="upsample_for_hotmap_loss_%d" % loss_i)
 
         #在计算loss时将其约束在01之间可以增加估计热度图的对比度
-        one_tmp = tf.ones_like(pred_heatmaps_tmp)
-        zero_tmp = tf.zeros_like(pred_heatmaps_tmp)
-        pred_heatmaps_tmp_01 = tf.where(pred_heatmaps_tmp > 1, x=one_tmp, y=pred_heatmaps_tmp)
-        pred_heatmaps_tmp_01 = tf.where(pred_heatmaps_tmp_01 < 0, x=zero_tmp, y=pred_heatmaps_tmp_01)
-        loss_scoremap += tf.nn.l2_loss(pred_heatmaps_tmp_01 - scoremap)
+        s = scoremap.get_shape().as_list()
+        gt = tf.reshape(scoremap, [batchsize * s[1] * s[2], -1])
+        pred = tf.reshape(pred_heatmaps_tmp, [batchsize * s[1] * s[2], -1])
+        loss_scoremap += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=pred, labels=gt))
+
+        # one_tmp = tf.ones_like(pred_heatmaps_tmp)
+        # zero_tmp = tf.zeros_like(pred_heatmaps_tmp)
+        # pred_heatmaps_tmp_01 = tf.where(pred_heatmaps_tmp > 1, x=one_tmp, y=pred_heatmaps_tmp)
+        # pred_heatmaps_tmp_01 = tf.where(pred_heatmaps_tmp_01 < 0, x=zero_tmp, y=pred_heatmaps_tmp_01)
+        # loss_scoremap += tf.nn.l2_loss(pred_heatmaps_tmp_01 - scoremap)
 
         #用is loss 修正热度图
-        pred_heatmaps_tmp_01_modi = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=-1), axis=-1)*pred_heatmaps_tmp_01
+        pred_heatmaps_tmp_modi = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=1), axis=1)*pred_heatmaps_tmp
 
-    loss_is_loss = loss_is_loss/batchsize
-    loss_scoremap = loss_scoremap/32.0/32.0/batchsize
+    loss_is_loss = loss_is_loss
+    loss_scoremap = loss_scoremap
 
     total_loss = loss_scoremap + loss_is_loss
-    return total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_01_modi
+    return total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_modi
 
 def average_gradients(tower_grads):
     """
@@ -162,8 +168,11 @@ def main(argv=None):
                     scoremap = tf.reduce_sum(scoremap, axis=-1)
                     one_scoremap = tf.ones_like(scoremap)
                     scoremap = tf.where(scoremap > 1, x=one_scoremap, y=scoremap)
-                    scoremap = tf.expand_dims(scoremap, axis=-1)  # hand back
+                    scoremap = tf.expand_dims(scoremap, axis=-1)
+                    scoremap = tf.concat([scoremap, 1-scoremap], axis=-1)
+
                     is_loss = tf.expand_dims(is_loss, axis=-1)
+                    is_loss = tf.concat([is_loss, 1 - is_loss], axis=-1)
 
                     """
                     model, batchsize, input_image, scoremap, is_loss, reuse_variables=None
@@ -207,7 +216,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-9000'
+            model_name = '/model-500'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
@@ -230,29 +239,41 @@ def main(argv=None):
 
                     fig = plt.figure(1)
                     plt.clf()
-                    ax1 = fig.add_subplot(1, 4, 1)
+                    ax1 = fig.add_subplot(2, 4, 1)
                     ax1.imshow(input_image_v[0, :, :, :])#第一个batch的维度 hand1(0~31) back1(32~63)
                     ax1.axis('off')
-                    ax1.set_title(str(is_loss_v[0]))#hand1 back1
 
 
-                    ax2 = fig.add_subplot(1, 4, 2)
+                    ax2 = fig.add_subplot(2, 4, 2)
                     ax2.imshow(scoremap_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
                     ax2.axis('off')
-                    ax2.set_title(str(is_loss_v[0]))  # hand1 back1
+                    ax2.set_title(str(is_loss_v[0, 0]))  # hand1 back1
+
+                    ax6 = fig.add_subplot(2, 4, 6)
+                    ax6.imshow(scoremap_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                    ax6.axis('off')
+                    ax6.set_title(str(is_loss_v[0, 1]))  # hand1 back1
 
 
 
 
-                    ax3 = fig.add_subplot(1, 4, 3)
+                    ax3 = fig.add_subplot(2, 4, 3)
                     ax3.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
                     ax3.axis('off')
-                    ax3.set_title(str(pre_is_loss_v[0]))  # hand1 back1
+                    ax3.set_title(str(pre_is_loss_v[0, 0]))  # hand1 back1
+
+                    ax7 = fig.add_subplot(2, 4, 7)
+                    ax7.imshow(preheat_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                    ax7.axis('off')
+                    ax7.set_title(str(pre_is_loss_v[0, 1]))  # hand1 back1
 
 
-                    ax4 = fig.add_subplot(1, 4, 4)
+                    ax4 = fig.add_subplot(2, 4, 4)
                     ax4.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
                     ax4.axis('off')
+                    ax8 = fig.add_subplot(2, 4, 8)
+                    ax8.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                    ax8.axis('off')
 
                     plt.savefig(os.path.join(params['logpath']) + "/" + str(step).zfill(10) + "_.png")
 
