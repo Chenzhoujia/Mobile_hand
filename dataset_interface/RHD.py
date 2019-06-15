@@ -31,32 +31,61 @@ class RHD(BaseDataset):
         # 将图像文件名列表加载到内存中
         imagefilenames = BaseDataset.listdir(self.path+"/training/color")
         self.example_num = len(imagefilenames)
-        self.imagefilenames = tf.constant(imagefilenames)
-
         maskfilenames = BaseDataset.listdir(self.path+"/training/mask")
-        self.maskfilenames = tf.constant(maskfilenames)
 
         assert self.example_num == len(anno_all), '标签和样本数量不一致'
         # 创建coco背景数据集
         coco_imagefilenames = BaseDataset.listdir("/media/chen/4CBEA7F1BEA7D1AE/Download/ai_challenger/train")
-        self.coco_imagefilenames = tf.constant(coco_imagefilenames)
         back_num = 22446
-        coco_dataset_back = tf.data.Dataset.from_tensor_slices((self.coco_imagefilenames, self.maskfilenames[:back_num], self.allxyz[:back_num], self.alluv[:back_num], self.allk[:back_num]))
-        coco_dataset_back = coco_dataset_back.map(RHD._parse_function_coco_background)
-        coco_dataset_back = coco_dataset_back.repeat()
-        coco_dataset_back = coco_dataset_back.shuffle(buffer_size=320)
-        self.coco_dataset_back = coco_dataset_back.batch(batchnum)
-        self.coco_iterator_back = self.coco_dataset_back.make_one_shot_iterator()
-        self.coco_get_batch_back_data = self.coco_iterator_back.get_next()
+        # 将coco背景数据集添加在 self.imagefilenames self.maskfilenames
+        # self.allk[label_i, :, :] self.alluv[label_i, :, :]  self.allxyz[label_i,:,:] 后面
+        imagefilenames = coco_imagefilenames + imagefilenames
+        maskfilenames = ['/home/chen/Documents/Mobile_hand/dataset_interface/zero.png']*back_num + maskfilenames
+
+        base_append = np.zeros_like(self.allxyz[:back_num])
+        self.allxyz = np.concatenate((base_append, self.allxyz), axis=0)
+        base_append = np.zeros_like(self.alluv[:back_num])
+        self.alluv = np.concatenate((base_append, self.alluv), axis=0)
+        base_append = np.zeros_like(self.allk[:back_num])
+        self.allk = np.concatenate((base_append, self.allk), axis=0)
+
+        for shuffle_i in range(int(len(imagefilenames)/2)):
+            if shuffle_i%2==0:
+                shuffle_ib = len(imagefilenames) - shuffle_i - 1
+                tmp = imagefilenames[shuffle_i]
+                imagefilenames[shuffle_i] = imagefilenames[shuffle_ib]
+                imagefilenames[shuffle_ib] = tmp
+                tmp = maskfilenames[shuffle_i]
+                maskfilenames[shuffle_i] = maskfilenames[shuffle_ib]
+                maskfilenames[shuffle_ib] = tmp
+                tmp = self.allxyz[shuffle_i]
+                self.allxyz[shuffle_i] = self.allxyz[shuffle_ib]
+                self.allxyz[shuffle_ib] = tmp
+                tmp = self.alluv[shuffle_i]
+                self.alluv[shuffle_i] = self.alluv[shuffle_ib]
+                self.alluv[shuffle_ib] = tmp
+                tmp = self.allk[shuffle_i]
+                self.allk[shuffle_i] = self.allk[shuffle_ib]
+                self.allk[shuffle_ib] = tmp
+
+        self.maskfilenames = tf.constant(maskfilenames)
+        self.imagefilenames = tf.constant(imagefilenames)
+        # coco_dataset_back = tf.data.Dataset.from_tensor_slices((self.coco_imagefilenames, self.maskfilenames[:back_num], self.allxyz[:back_num], self.alluv[:back_num], self.allk[:back_num]))
+        # coco_dataset_back = coco_dataset_back.map(RHD._parse_function_coco_background)
+        # coco_dataset_back = coco_dataset_back.repeat()
+        # coco_dataset_back = coco_dataset_back.shuffle(buffer_size=320)
+        # self.coco_dataset_back = coco_dataset_back.batch(batchnum)
+        # self.coco_iterator_back = self.coco_dataset_back.make_one_shot_iterator()
+        # self.coco_get_batch_back_data = self.coco_iterator_back.get_next()
 
         # 创建背景数据集
-        dataset_back = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
-        dataset_back = dataset_back.map(RHD._parse_function_background)
-        dataset_back = dataset_back.repeat()
-        dataset_back = dataset_back.shuffle(buffer_size=320)
-        self.dataset_back = dataset_back.batch(batchnum)
-        self.iterator_back = self.dataset_back.make_one_shot_iterator()
-        self.get_batch_back_data = self.iterator_back.get_next()
+        # dataset_back = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
+        # dataset_back = dataset_back.map(RHD._parse_function_background)
+        # dataset_back = dataset_back.repeat()
+        # dataset_back = dataset_back.shuffle(buffer_size=320)
+        # self.dataset_back = dataset_back.batch(batchnum)
+        # self.iterator_back = self.dataset_back.make_one_shot_iterator()
+        # self.get_batch_back_data = self.iterator_back.get_next()
 
         # 创建正经数据集
         dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
@@ -135,6 +164,7 @@ class RHD(BaseDataset):
         image_size = (320, 320)
         image_string = tf.read_file(imagefilename)
         image_decoded = tf.image.decode_png(image_string)
+        image_decoded = tf.random_crop(image_decoded, [320, 320, 3])
         image_decoded.set_shape([image_size[0], image_size[0], 3])
         image = tf.cast(image_decoded, tf.float32)
         image = image / 255.0 - 0.5
@@ -209,6 +239,7 @@ class RHD(BaseDataset):
         image_size = (320, 320)
         image_string = tf.read_file(imagefilename)
         image_decoded = tf.image.decode_png(image_string)
+        image_decoded = tf.image.resize_images(image_decoded, [320, 320], method=0)
         image_decoded.set_shape([image_size[0],image_size[0],3])
         image = tf.cast(image_decoded, tf.float32)
         image = image / 255.0 - 0.5
@@ -288,7 +319,7 @@ class RHD(BaseDataset):
         kp_coord_xyz_root = kp_coord_xyz21[0, :] # this is the palm coord
         kp_coord_xyz21_rel = kp_coord_xyz21 - kp_coord_xyz_root  # relative coords in metric coords
         index_root_bone_length = tf.sqrt(tf.reduce_sum(tf.square(kp_coord_xyz21_rel[12, :] - kp_coord_xyz21_rel[11, :])))
-        keypoint_xyz21_normed = kp_coord_xyz21_rel / index_root_bone_length  # normalized by length of 12->11
+        keypoint_xyz21_normed = kp_coord_xyz21_rel / (index_root_bone_length+0.0001)  # normalized by length of 12->11
 
         # calculate local coordinates
         kp_coord_xyz21_local = bone_rel_trafo(keypoint_xyz21_normed)
@@ -411,11 +442,19 @@ class RHD(BaseDataset):
         #     scoremap = tf.nn.dropout(scoremap, scoremap_dropout_prob,
         #                              noise_shape=[1, 1, 21])
         #     scoremap *= scoremap_dropout_prob
-        scoremap = tf.concat([tf.expand_dims(scoremap[:,:,1],-1),tf.expand_dims(scoremap[:,:,5],-1)
+        scoremap = tf.concat([tf.expand_dims(scoremap[:, :, 1],-1),tf.expand_dims(scoremap[:,:,5],-1)
                               ,tf.expand_dims(scoremap[:,:,9],-1),tf.expand_dims(scoremap[:,:,13],-1)
                               ,tf.expand_dims(scoremap[:, :, 17], -1)], 2)
+        #当 所有坐标加起来为0时，将scoremap置零
+        scoremap = tf.cond(tf.equal(x=tf.reduce_sum(keypoint_hw21), y=tf.constant(0.0)),
+                             true_fn=lambda: tf.zeros_like(scoremap),
+                             false_fn=lambda: scoremap)
+
         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2\
             = RHD._parse_function_furtner(image, keypoint_uv21, hand_parts_mask, scoremap)
+
+
+
 
         return image, keypoint_xyz21, keypoint_uv21, scoremap, keypoint_vis21, k, num_px_left_hand, num_px_right_hand, \
                image_crop_comb, hand_motion, image_crop_comb2, scoremap1, scoremap2, is_loss1, is_loss2
@@ -604,12 +643,6 @@ class RHD(BaseDataset):
 #     for i in tqdm(range(dataset_RHD.example_num)):
 #         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
 #         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2 = sess.run(dataset_RHD.get_batch_data)
-#
-#         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
-#                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0], is_loss1[0], is_loss2[0])
-#
-#         image, keypoint_xyz, keypoint_uv, scoremap, keypoint_vis, k, num_px_left_hand, num_px_right_hand, \
-#         image_crop_comb, hand_motion, image_crop_comb2,  scoremap1, scoremap2, is_loss1, is_loss2 = sess.run(dataset_RHD.coco_get_batch_back_data)
 #
 #         RHD.visualize_data(image[0], keypoint_xyz[0], keypoint_uv[0], keypoint_vis[0], k[0], num_px_left_hand[0], num_px_right_hand[0], scoremap[0],
 #                            image_crop_comb[0], hand_motion[0], image_crop_comb2[0], scoremap1[0], scoremap2[0], is_loss1[0], is_loss2[0])

@@ -18,6 +18,7 @@ from src import  network_mv2_hourglass
 from mpl_toolkits.mplot3d import Axes3D
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 ops = NetworkOps
+test_num = 64
 def upsample(inputs, factor, name):
     return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor],
                                     name=name)
@@ -62,8 +63,8 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_
         #用is loss 修正热度图
         pred_heatmaps_tmp_01_modi = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=-1), axis=-1)*pred_heatmaps_tmp_01
 
-    loss_is_loss = loss_is_loss/batchsize
-    loss_scoremap = loss_scoremap/32.0/32.0/batchsize
+    loss_is_loss = loss_is_loss/test_num
+    loss_scoremap = loss_scoremap/32.0/32.0/test_num
 
     total_loss = loss_scoremap + loss_is_loss
     return total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_01_modi
@@ -126,20 +127,17 @@ def main(argv=None):
     )
 
     with tf.Graph().as_default(), tf.device("/cpu:0"):
-        dataset_RHD = RHD(batchnum=params['batchsize'])
+        dataset_RHD = RHD(batchnum=test_num)
 
         global_step = tf.Variable(0, trainable=False)
-        learning_rate = tf.train.exponential_decay(float(params['lr']), global_step,
-                                                   decay_steps=10000, decay_rate=float(params['decay_rate']),
-                                                   staircase=True)
-        opt = tf.train.AdamOptimizer(learning_rate, epsilon=1e-8)
-        tower_grads = []
+
         reuse_variable = False
 
         for i in range(params['gpus']):
             with tf.device("/gpu:%d" % i):
                 with tf.name_scope("GPU_%d" % i):
-                    #input_image, keypoint_xyz, keypoint_uv, input_heat, keypoint_vis, k, num_px_left_hand, num_px_right_hand \
+                    input_node = tf.placeholder(tf.float32, shape=[test_num, 32, 32, 3], name="input_image")
+
                     batch_data_all = dataset_RHD.get_batch_data
                     input_image1 = batch_data_all[8]
                     input_image2 = batch_data_all[10]
@@ -153,7 +151,7 @@ def main(argv=None):
                     # scoremap = tf.concat([scoremap1, scoremap1_back], 0)
                     # is_loss = tf.concat([is_loss1, is_loss1_back], 0)
 
-                    input_image = input_image1
+                    input_image = input_node
                     scoremap = scoremap1
                     is_loss = is_loss1
 
@@ -174,31 +172,9 @@ def main(argv=None):
                         = get_loss_and_output(params['model'], params['batchsize'],
                                                 input_image, scoremap, is_loss, reuse_variable)
 
-                    grads = opt.compute_gradients(loss)
-                    tower_grads.append(grads)
-
-        grads = average_gradients(tower_grads)
-        for grad, var in grads:
-            if grad is not None:
-                tf.summary.histogram("gradients_on_average/%s" % var.op.name, grad)
-
-        apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
-        for var in tf.trainable_variables():
-            tf.summary.histogram(var.op.name, var)
-
-        MOVING_AVERAGE_DECAY = 0.99
-        variable_averages = tf.train.ExponentialMovingAverage(MOVING_AVERAGE_DECAY, global_step)
-        variable_to_average = (tf.trainable_variables() + tf.moving_average_variables())
-        variables_averages_op = variable_averages.apply(variable_to_average)
-
-        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-        with tf.control_dependencies(update_ops):
-            train_op = tf.group(apply_gradient_op, variables_averages_op)
 
         saver = tf.train.Saver(max_to_keep=10)
 
-        tf.summary.scalar("learning_rate", learning_rate)
-        tf.summary.scalar("loss", loss)
 
         init = tf.global_variables_initializer()
         config = tf.ConfigProto()
@@ -213,56 +189,54 @@ def main(argv=None):
                 print("restore from " + checkpoint_path+model_name)
             total_step_num = params['num_train_samples'] * params['max_epoch'] // (params['batchsize']* 2 * params['gpus'])
 
-            print("Start training...")
+            print("Start testing...")
+            path = "/home/chen/Documents/Mobile_hand/experiments/varify/image/set1/"
+            import matplotlib.image
             for step in tqdm(range(total_step_num)):
-                _, loss_value = sess.run([train_op, loss])
-                if step % params['per_update_tensorboard_step'] == 0:
-                    loss_v, loss_is_loss_v, loss_scoremap_v,\
-                    input_image_v, scoremap_v, is_loss_v,\
-                    preheat_v, pre_is_loss_v, pred_heatmaps_tmp_01_modi_v\
-                        = sess.run(
-                        [loss, loss_is_loss, loss_scoremap,
-                         input_image, scoremap, is_loss,
-                         preheat, pre_is_loss, pred_heatmaps_tmp_01_modi])
+                image_raw12_crop = matplotlib.image.imread(path + str(step).zfill(5)+'_'+str(step%2+1)+'.jpg')
+                image_raw12_crop = image_raw12_crop.astype('float') / 255.0 - 0.5
+                loss_v, loss_is_loss_v, loss_scoremap_v,\
+                input_image_v, scoremap_v, is_loss_v,\
+                preheat_v, pre_is_loss_v, pred_heatmaps_tmp_01_modi_v\
+                    = sess.run(
+                    [loss, loss_is_loss, loss_scoremap,
+                     input_image, scoremap, is_loss,
+                     preheat, pre_is_loss, pred_heatmaps_tmp_01_modi],
+                    feed_dict={input_node: np.repeat(image_raw12_crop[np.newaxis, :],test_num,axis=0)})
 
-                    input_image_v = (input_image_v + 0.5) * 255
-                    input_image_v = input_image_v.astype(np.int16)
+                input_image_v = (image_raw12_crop + 0.5) * 255
+                input_image_v = input_image_v.astype(np.int16)
 
-                    fig = plt.figure(1)
-                    plt.clf()
-                    ax1 = fig.add_subplot(1, 4, 1)
-                    ax1.imshow(input_image_v[0, :, :, :])#第一个batch的维度 hand1(0~31) back1(32~63)
-                    ax1.axis('off')
-                    ax1.set_title(str(is_loss_v[0]))#hand1 back1
-
-
-                    ax2 = fig.add_subplot(1, 4, 2)
-                    ax2.imshow(scoremap_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                    ax2.axis('off')
-                    ax2.set_title(str(is_loss_v[0]))  # hand1 back1
+                fig = plt.figure(1)
+                plt.clf()
+                ax1 = fig.add_subplot(1, 4, 1)
+                ax1.imshow(input_image_v)#第一个batch的维度 hand1(0~31) back1(32~63)
+                ax1.axis('off')
+                ax1.set_title(str(is_loss_v[0]))#hand1 back1
 
 
+                ax2 = fig.add_subplot(1, 4, 2)
+                ax2.imshow(scoremap_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                ax2.axis('off')
+                ax2.set_title(str(is_loss_v[0]))  # hand1 back1
 
 
-                    ax3 = fig.add_subplot(1, 4, 3)
-                    ax3.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                    ax3.axis('off')
-                    ax3.set_title(str(pre_is_loss_v[0]))  # hand1 back1
 
 
-                    ax4 = fig.add_subplot(1, 4, 4)
-                    ax4.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                    ax4.axis('off')
-
-                    plt.savefig(os.path.join(params['logpath']) + "/" + str(step).zfill(10) + "_.png")
-
-                    print("loss:"+str(loss_v), " is_loss_loss:"+str(loss_is_loss_v)+" scoremap_loss:"
-                          +str(loss_scoremap_v))
+                ax3 = fig.add_subplot(1, 4, 3)
+                ax3.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                ax3.axis('off')
+                ax3.set_title(str(pre_is_loss_v[0]))  # hand1 back1
 
 
-                    # save model
-                if step % params['per_saved_model_step'] == 0:
-                    saver.save(sess, os.path.join(checkpoint_path, 'model'), global_step=step)
+                ax4 = fig.add_subplot(1, 4, 4)
+                ax4.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                ax4.axis('off')
+
+                plt.savefig("/home/chen/Documents/Mobile_hand/experiments/varify/image/valid_on_cam/oneout/"+str(test_num)+"/" + str(step).zfill(10) + "_.png")
+
+                print("loss:"+str(loss_v), " is_loss_loss:"+str(loss_is_loss_v)+" scoremap_loss:"
+                      +str(loss_scoremap_v))
 
 if __name__ == '__main__':
     tf.app.run()

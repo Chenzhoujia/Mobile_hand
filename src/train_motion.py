@@ -139,7 +139,7 @@ def main(argv=None):
                     scoremap1 = tf.where(scoremap1 > 1, x=one_scoremap, y=scoremap1)
                     scoremap2 = tf.where(scoremap2 > 1, x=one_scoremap, y=scoremap2)
 
-                    scoremap = scoremap1- scoremap2
+                    scoremap = scoremap1 - scoremap2
 
                     # 计算一个scoremap的loss
                     scoremap = tf.reduce_sum(scoremap, axis=-1)
@@ -187,10 +187,10 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            # model_name = '/model-29500'
-            # if checkpoint_path:
-            #     saver.restore(sess, checkpoint_path+model_name)
-            #     print("restore from " + checkpoint_path+model_name)
+            model_name = '/model-17500'
+            if checkpoint_path:
+                saver.restore(sess, checkpoint_path+model_name)
+                print("restore from " + checkpoint_path+model_name)
 
             summary_writer = tf.summary.FileWriter(os.path.join(params['logpath'], training_name), sess.graph)
             total_step_num = params['num_train_samples'] * params['max_epoch'] // (params['batchsize'] * params['gpus'])
@@ -210,7 +210,6 @@ def main(argv=None):
                     plt.clf()
                     ax1 = fig.add_subplot(1, 2, 1)
                     ax1.imshow(scoremap_v[0, :, :, 0])#第一个batch的维度 hand1(0~31) back1(32~63)
-                    ax1.axis('off')
                     """
                             loss_l2r = tf.nn.l2_loss(hand_motion[:, 0] - ur[:, 0], name='lossr_heatmap_stage%d' % idx)
                             loss_l2x = tf.nn.l2_loss(hand_motion[:, 1] - ux[:, 0], name='lossx_heatmap_stage%d' % idx)
