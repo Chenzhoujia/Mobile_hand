@@ -27,73 +27,61 @@ from src.networks import get_network
 from src.general import NetworkOps
 
 ops = NetworkOps
-model_name = 'model-124500'
+checkpoint_path = '/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/'
+model_name = 'model-2700'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
 parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
 parser.add_argument('--size', type=int, default=32)
-parser.add_argument('--checkpoint', type=str, default='/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/'+model_name, help='checkpoint path')
-parser.add_argument('--output_node_names', type=str, default='GPU_0/final_fxuz_Variable') #['GPU_0/final_r_Variable','GPU_0/final_x_Variable','GPU_0/final_y_Variable','GPU_0/final_z_Variable'])
-parser.add_argument('--output_graph', type=str, default='/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/'+model_name+'.pb', help='output_freeze_path')
+parser.add_argument('--checkpoint', type=str, default=checkpoint_path + model_name, help='checkpoint path')
+parser.add_argument('--output_node_names', type=str, default='GPU_0/final_pred_heatmaps_tmp') #['GPU_0/final_r_Variable','GPU_0/final_x_Variable','GPU_0/final_y_Variable','GPU_0/final_z_Variable'])
+parser.add_argument('--output_graph', type=str, default=checkpoint_path + model_name+'.pb', help='output_freeze_path')
 
 args = parser.parse_args()
 i = 0
 batchsize = 1
+def upsample(inputs, factor, name):
+    return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor], name=name)
+
 with tf.Graph().as_default(), tf.device("/cpu:0"):
     with tf.device("/gpu:%d" % i):
         with tf.name_scope("GPU_%d" % i):
-            input_node = tf.placeholder(tf.float32, shape=[2, args.size, args.size, 3], name="input_image")
+            input_node = tf.placeholder(tf.float32, shape=[1, args.size, args.size, 3], name="input_image")
+            input_node = tf.add(input_node, 0, name='input_image_add0')
             with tf.variable_scope(tf.get_variable_scope(), reuse=False):
-                network_mv2_hourglass.N_KPOINTS = 8
-                _, pred_heatmaps_all12 = get_network('mv2_hourglass', input_node, True)
-            diffmap = []
-            for batch_i in range(len(pred_heatmaps_all12)):
-                diffmap.append(
-                    pred_heatmaps_all12[batch_i][0:batchsize] - pred_heatmaps_all12[batch_i][batchsize:batchsize * 2])
-
-            # diffmap_t 将4个阶段的输出，在通道数上整合
-            for batch_i in range(len(diffmap)):
-                if batch_i == 0:
-                    diffmap_t = diffmap[batch_i]
-                else:
-                    diffmap_t = tf.concat([diffmap[batch_i], diffmap_t], axis=3)
-
-            with tf.variable_scope("diff", reuse=False):
-                network_mv2_hourglass.N_KPOINTS = 1
-                _, pred_diffmap_all = get_network('mv2_hourglass', diffmap_t, True)
-            losses = []
-            for idx, pred_heat in enumerate(pred_diffmap_all):
-                # flatten
-                s = pred_heat.get_shape().as_list()
-                pred_heat = tf.reshape(pred_heat, [s[0], -1])  # this is Bx16*16*1
-                # x = tf.concat([x, hand_side], 1)
-
-                # pred_heat --> 3 params
-                out_chan_list = [32, 16, 8]
+                network_mv2_hourglass.N_KPOINTS = 2
+                _, pred_heatmaps_all = get_network('mv2_hourglass', input_node, True)
+            for loss_i in range(len(pred_heatmaps_all)):
+                # 计算 isloss，用softmax计算 0~1}
+                is_loss_s = pred_heatmaps_all[loss_i].get_shape().as_list()
+                pre_is_loss = tf.reshape(pred_heatmaps_all[loss_i],
+                                         [-1, is_loss_s[1] * is_loss_s[2] * is_loss_s[3]])  # this is Bx16*16*1
+                out_chan_list = [32, 16, 8, 2]
                 for i, out_chan in enumerate(out_chan_list):
-                    pred_heat = ops.fully_connected_relu(pred_heat, 'fc_vp_%d_%d' % (idx, i), out_chan=out_chan,
-                                                         trainable=True)
+                    pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (loss_i, i),
+                                                           out_chan=out_chan, trainable=True)  # (128,1)
 
-                ux = ops.fully_connected(pred_heat, 'fc_vp_ux_%d' % idx, out_chan=1, trainable=True)
-                uy = ops.fully_connected(pred_heat, 'fc_vp_uy_%d' % idx, out_chan=1, trainable=True)
-                uz = ops.fully_connected(pred_heat, 'fc_vp_uz_%d' % idx, out_chan=1, trainable=True)
-                ur = ops.fully_connected(pred_heat, 'fc_vp_ur_%d' % idx, out_chan=1, trainable=True)
-                #output_node = tf.stack([ur[:, 0], ux[:, 0], uy[:, 0], uz[:, 0]], axis=1, name="final_rxyz")
-                ufxuz = tf.concat(values=[ur, ux, uy, uz], axis=1, name='fxuz')
+                # 计算热度图
+                scale = 2
+                pred_heatmaps_tmp = upsample(pred_heatmaps_all[loss_i], scale,
+                                             name="upsample_for_hotmap_loss_%d" % loss_i)
 
-            # output_node_ur = tf.add(ur, 0, name='final_r_Variable')
-            # output_node_ux = tf.add(ux, 0, name='final_x_Variable')
-            # output_node_uy = tf.add(uy, 0, name='final_y_Variable')
-            # output_node_uz = tf.add(uz, 0, name='final_z_Variable')
-            output_node_ufxuz = tf.add(ufxuz, 0, name='final_fxuz_Variable')#(1,4)
+                # 用is loss 修正热度图
+                pre_is_loss = tf.nn.softmax(pre_is_loss)
+                pred_heatmaps_tmp_01_modi = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=1),
+                                                           axis=1) * pred_heatmaps_tmp
+                pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
+                pred_heatmaps_tmp_01_modi = tf.nn.softmax(pred_heatmaps_tmp_01_modi)
 
+            output_node_ufxuz = tf.add(pred_heatmaps_tmp, 0, name='final_pred_heatmaps_tmp') #(1,4)
+    saver = tf.train.Saver(max_to_keep=10)
     init = tf.global_variables_initializer()
     config = tf.ConfigProto()
     # occupy gpu gracefully
     config.gpu_options.allow_growth = True
     with tf.Session(config=config) as sess:
         init.run()
-        saver = tf.train.Saver()
+
         saver.restore(sess, args.checkpoint)
         print("restore from " + args.checkpoint)
 
@@ -115,11 +103,11 @@ bazel-bin/tensorflow/tools/graph_transforms/summarize_graph \
 
 source activate TFlite
 tflite_convert \
---graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-124500.pb \
---output_file=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-124500.lite \
+--graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-2700.pb \
+--output_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-2700.lite \
 --output_format=TFLITE \
---input_shapes=2,32,32,3 \
+--input_shapes=1,32,32,3 \
 --input_arrays=GPU_0/input_image \
---output_arrays=GPU_0/final_fxuz_Variable \
+--output_arrays=GPU_0/final_pred_heatmaps_tmp \
 --inference_type=FLOAT
 """
