@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 import datetime
+
+import scipy.misc
 import tensorflow as tf
 import os
 import platform
 import time
 import numpy as np
 import configparser
-
+import cv2
 from tqdm import tqdm
 
 from dataset_interface.RHD import RHD
@@ -167,8 +169,13 @@ def main(argv=None):
         config.gpu_options.allow_growth = True
         with tf.Session(config=config) as sess:
             init.run()
+            cap = cv2.VideoCapture(0)
+            centerx = 160
+            centery = 120
+            size = 24
+            color_ = (0, 255, 0)
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = 'model-15350'
+            model_name = 'model-1550'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+'/'+model_name)
                 print("restore from " + checkpoint_path+'/'+model_name)
@@ -177,9 +184,16 @@ def main(argv=None):
             print("Start testing...")
             path = "/home/chen/Documents/Mobile_hand/experiments/varify/image/set1/"
             import matplotlib.image
-            for step in tqdm(range(286)):
-                image_raw12_crop = matplotlib.image.imread(path + str(int(step/2)).zfill(5)+'_'+str(step%2+1)+'.jpg')
-                image_raw12_crop = image_raw12_crop.astype('float') / 255.0 - 0.5
+            for step in tqdm(range(100000)):
+                _, image_raw1 = cap.read()
+                image_raw1 = scipy.misc.imresize(image_raw1, (240, 320))
+                image_raw1_crop = np.array(image_raw1[centery - size: centery + size, centerx - size: centerx + size])
+                image_raw1_crop = cv2.resize(image_raw1_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
+                first_point = (centerx-size, centery-size)
+                last_point = (centerx+size, centery+size)
+                cv2.rectangle(image_raw1, first_point, last_point, color=color_, thickness = 2)
+
+                image_raw12_crop = image_raw1_crop.astype('float') / 255.0 - 0.5
                 scoremap_v, is_loss_v,\
                 preheat_v, pre_is_loss_v, pred_heatmaps_tmp_01_modi_v\
                     = sess.run(
@@ -187,38 +201,58 @@ def main(argv=None):
                      preheat, pre_is_loss, pred_heatmaps_tmp_01_modi],
                     feed_dict={input_node: np.repeat(image_raw12_crop[np.newaxis, :],test_num,axis=0)})
 
+
+                #根据preheat_v 计算最有可能的指尖坐标，当手指指尖存在时更新坐标centerx， centery
+                if pre_is_loss_v[0, 0]>pre_is_loss_v[0, 1]:
+                    color_ = (0, 255, 0)
+                    motion = preheat_v[0, :, :, 0] - preheat_v[0, :, :, 1]
+                    raw, column = motion.shape
+                    _positon = np.argmax(motion)  # get the index of max in the a
+                    m, n = divmod(_positon, column)
+                else:
+                    color_ = (255, 0, 0)
+                    m = 15.5
+                    n = 15.5
+
+                right_move = int((n - 15.5)/32*48)
+                down_move = int((m - 15.5)/32*48)
+                centery = centery+down_move
+                centerx = centerx+right_move
                 input_image_v = (image_raw12_crop + 0.5) * 255
                 input_image_v = input_image_v.astype(np.int16)
+
+                if centery<0 or centery>240:
+                    centery = 120
+
+                if centerx < 0 or centerx > 320:
+                    centerx = 160
+
 
                 fig = plt.figure(1)
                 plt.clf()
                 ax1 = fig.add_subplot(2, 3, 1)
                 ax1.imshow(input_image_v)  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax1.axis('off')
 
                 ax3 = fig.add_subplot(2, 3, 2)
                 ax3.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax3.axis('off')
                 ax3.set_title(str(pre_is_loss_v[0, 0]))  # hand1 back1
 
                 ax7 = fig.add_subplot(2, 3, 5)
                 ax7.imshow(preheat_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax7.axis('off')
                 ax7.set_title(str(pre_is_loss_v[0, 1]))  # hand1 back1
 
                 ax4 = fig.add_subplot(2, 3, 3)
                 ax4.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax4.axis('off')
+                ax4.set_title('m:'+str(m)+' n:'+str(n))
+
                 ax8 = fig.add_subplot(2, 3, 6)
                 ax8.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax8.axis('off')
 
                 ax2 = fig.add_subplot(2, 3, 4)
-                ax2.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0] - pred_heatmaps_tmp_01_modi_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax2.axis('off')
+                ax2.imshow(image_raw1)  # 第一个batch的维度 hand1(0~31) back1(32~63)
 
                 plt.savefig("/home/chen/Documents/Mobile_hand/experiments/varify/image/valid_on_cam/softmax/"+ str(step).zfill(10) + model_name+"_.png")
-
+                plt.pause(0.01)
 
 if __name__ == '__main__':
     tf.app.run()

@@ -36,10 +36,12 @@ class RHD(BaseDataset):
         assert self.example_num == len(anno_all), '标签和样本数量不一致'
         # 创建coco背景数据集
         coco_imagefilenames = BaseDataset.listdir("/media/chen/4CBEA7F1BEA7D1AE/Download/ai_challenger/train")
-        back_num = 22446
+        vr715_imagefilenames = BaseDataset.listdir("/media/chen/4CBEA7F1BEA7D1AE/VR715")
+
+        back_num = 22446 + 17648
         # 将coco背景数据集添加在 self.imagefilenames self.maskfilenames
         # self.allk[label_i, :, :] self.alluv[label_i, :, :]  self.allxyz[label_i,:,:] 后面
-        imagefilenames = coco_imagefilenames + imagefilenames
+        imagefilenames = vr715_imagefilenames + coco_imagefilenames + imagefilenames
         maskfilenames = ['/home/chen/Documents/Mobile_hand/dataset_interface/zero.png']*back_num + maskfilenames
 
         base_append = np.zeros_like(self.allxyz[:back_num])
@@ -636,7 +638,7 @@ class RHD(BaseDataset):
                       false_fn=lambda: is_loss2)
 
         return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2, is_loss1, is_loss2
-
+#
 # dataset_RHD = RHD()
 # with tf.Session() as sess:
 #

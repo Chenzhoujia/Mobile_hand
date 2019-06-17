@@ -31,6 +31,7 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_
         _, pred_heatmaps_all = get_network(model, input_image, True) #第一个batch的维度 hand back
 
     loss_scoremap = 0.0
+    loss_scoremap_m = 0.0
     loss_is_loss = 0.0
     for loss_i in range(len(pred_heatmaps_all)):
         # 计算 isloss，用softmax计算 0~1}
@@ -41,13 +42,6 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_
             pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (loss_i, i), out_chan=out_chan, trainable=True)#(128,1)
         #将pre_is_loss [?,2]
         loss_is_loss += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=pre_is_loss, labels=is_loss))
-        # one_pre_is_loss = tf.ones_like(pre_is_loss)
-        # zero_pre_is_loss = tf.zeros_like(pre_is_loss)
-        # pre_is_loss = tf.where(pre_is_loss > 1, x=one_pre_is_loss, y=pre_is_loss)
-        # pre_is_loss = tf.where(pre_is_loss < 0, x=zero_pre_is_loss, y=pre_is_loss)
-
-        #pre_is_loss = tf.nn.softmax(pre_is_loss)
-        # loss_is_loss += tf.nn.l2_loss(pre_is_loss-is_loss)
 
         # 计算热度图
         scale = 2
@@ -66,13 +60,21 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_
         # loss_scoremap += tf.nn.l2_loss(pred_heatmaps_tmp_01 - scoremap)
 
         #用is loss 修正热度图
+        pre_is_loss = tf.nn.softmax(pre_is_loss)
+
         pred_heatmaps_tmp_modi = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=1), axis=1)*pred_heatmaps_tmp
+
+        loss_scoremap_m += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=pred_heatmaps_tmp_modi, labels=gt))
+
+        pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
+        pred_heatmaps_tmp_modi = tf.nn.softmax(pred_heatmaps_tmp_modi)
 
     loss_is_loss = loss_is_loss
     loss_scoremap = loss_scoremap
+    loss_scoremap_m = loss_scoremap_m
 
-    total_loss = loss_scoremap + loss_is_loss
-    return total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_modi
+    total_loss = loss_scoremap + loss_is_loss + loss_scoremap_m
+    return total_loss, loss_is_loss, loss_scoremap, loss_scoremap_m, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_modi
 
 def average_gradients(tower_grads):
     """
@@ -178,7 +180,7 @@ def main(argv=None):
                     model, batchsize, input_image, scoremap, is_loss, reuse_variables=None
                     total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_01_modi
                     """
-                    loss, loss_is_loss, loss_scoremap,\
+                    loss, loss_is_loss, loss_scoremap,loss_scoremap_m,\
                     preheat, pre_is_loss, pred_heatmaps_tmp_01_modi\
                         = get_loss_and_output(params['model'], params['batchsize'],
                                                 input_image, scoremap, is_loss, reuse_variable)
@@ -216,7 +218,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-500'
+            model_name = '/model-300'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
@@ -226,11 +228,10 @@ def main(argv=None):
             for step in tqdm(range(total_step_num)):
                 _, loss_value = sess.run([train_op, loss])
                 if step % params['per_update_tensorboard_step'] == 0:
-                    loss_v, loss_is_loss_v, loss_scoremap_v,\
+                    loss_v, loss_is_loss_v, loss_scoremap_v,loss_scoremap_m_v, \
                     input_image_v, scoremap_v, is_loss_v,\
                     preheat_v, pre_is_loss_v, pred_heatmaps_tmp_01_modi_v\
-                        = sess.run(
-                        [loss, loss_is_loss, loss_scoremap,
+                        = sess.run([loss, loss_is_loss, loss_scoremap,loss_scoremap_m,
                          input_image, scoremap, is_loss,
                          preheat, pre_is_loss, pred_heatmaps_tmp_01_modi])
 
@@ -251,10 +252,10 @@ def main(argv=None):
 
                     ax6 = fig.add_subplot(2, 4, 6)
                     ax6.imshow(scoremap_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                    if np.sum(scoremap_v[0, :, :, 1])==0:
+                        print("zero")
                     ax6.axis('off')
                     ax6.set_title(str(is_loss_v[0, 1]))  # hand1 back1
-
-
 
 
                     ax3 = fig.add_subplot(2, 4, 3)
@@ -275,10 +276,14 @@ def main(argv=None):
                     ax8.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
                     ax8.axis('off')
 
+                    ax5 = fig.add_subplot(2, 4, 5)
+                    ax5.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0] - pred_heatmaps_tmp_01_modi_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                    ax5.axis('off')
+
                     plt.savefig(os.path.join(params['logpath']) + "/" + str(step).zfill(10) + "_.png")
 
                     print("loss:"+str(loss_v), " is_loss_loss:"+str(loss_is_loss_v)+" scoremap_loss:"
-                          +str(loss_scoremap_v))
+                          +str(loss_scoremap_v)+" scoremap_loss:"+str(loss_scoremap_m_v))
 
 
                     # save model

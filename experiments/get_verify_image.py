@@ -29,7 +29,7 @@ path = "/media/chen/4CBEA7F1BEA7D1AE/VR715/"
 while (True):
     # 获取相隔0.1s的两帧图片，做根据初始化或者网络输出结果，绘制矩形框，进行剪裁，reshape
     _, image_raw1 = cap.read()
-    image_raw1 = scipy.misc.imresize(image_raw1, (240, 320))
+    image_raw1 = scipy.misc.imresize(image_raw1, (320, 320))
     # time.sleep(0.5)
     # _, image_raw2 = cap.read()
     # image_raw2 = scipy.misc.imresize(image_raw2, (240, 320))

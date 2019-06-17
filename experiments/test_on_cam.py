@@ -173,7 +173,7 @@ if __name__ == '__main__':
             # #         # 剪切 resize
             # #
             # #     size = 24
-            # #     image_raw1_crop = np.array(image_raw1[centery - size: centery + size, centerx - size: centerx + size])
+            # #     image_raw1_crop = np.array(image_raw1[centery - : centery + size, centerx - size: centerx + size])
             # #     image_raw2_crop = np.array(image_raw2[centery - size: centery + size, centerx - size: centerx + size])
             # #     image_raw1_crop = cv2.resize(image_raw1_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
             # #     image_raw2_crop = cv2.resize(image_raw2_crop, (int(32), int(32)), interpolation=cv2.INTER_AREA)
