@@ -28,7 +28,7 @@ from src.general import NetworkOps
 
 ops = NetworkOps
 checkpoint_path = '/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/'
-model_name = 'model-2700'
+model_name = 'model-4200'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
 parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
@@ -47,7 +47,6 @@ with tf.Graph().as_default(), tf.device("/cpu:0"):
     with tf.device("/gpu:%d" % i):
         with tf.name_scope("GPU_%d" % i):
             input_node = tf.placeholder(tf.float32, shape=[1, args.size, args.size, 3], name="input_image")
-            input_node = tf.add(input_node, 0, name='input_image_add0')
             with tf.variable_scope(tf.get_variable_scope(), reuse=False):
                 network_mv2_hourglass.N_KPOINTS = 2
                 _, pred_heatmaps_all = get_network('mv2_hourglass', input_node, True)
@@ -73,7 +72,7 @@ with tf.Graph().as_default(), tf.device("/cpu:0"):
                 pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
                 pred_heatmaps_tmp_01_modi = tf.nn.softmax(pred_heatmaps_tmp_01_modi)
 
-            output_node_ufxuz = tf.add(pred_heatmaps_tmp, 0, name='final_pred_heatmaps_tmp') #(1,4)
+            output_node_ufxuz = tf.add(pred_heatmaps_tmp_01_modi, 0, name='final_pred_heatmaps_tmp') #(1,4)
     saver = tf.train.Saver(max_to_keep=10)
     init = tf.global_variables_initializer()
     config = tf.ConfigProto()

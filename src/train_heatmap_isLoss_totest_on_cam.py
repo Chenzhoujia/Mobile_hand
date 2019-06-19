@@ -175,7 +175,7 @@ def main(argv=None):
             size = 24
             color_ = (0, 255, 0)
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = 'model-1550'
+            model_name = 'model-4200'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+'/'+model_name)
                 print("restore from " + checkpoint_path+'/'+model_name)
