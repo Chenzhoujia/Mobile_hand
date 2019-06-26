@@ -91,19 +91,19 @@ with tf.Graph().as_default(), tf.device("/cpu:0"):
             args.output_node_names.split(",")
         )
 
-with tf.gfile.GFile(args.output_graph, "wb") as f:
+with tf.gfile.FastGFile(args.output_graph, "wb") as f:
     f.write(output_graph_def.SerializeToString())
 
 
 """
 cd ~/Downloads/tensorflow 
 bazel-bin/tensorflow/tools/graph_transforms/summarize_graph \
---in_graph=/home/chen/Documents/Mobile_hand/experiments/trained/mv2_hourglass_deep/models/mv2_hourglass_batch-32_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass/model-500.pb
+--in_graph=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-4200.pb
 
 source activate TFlite
 tflite_convert \
---graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-2700.pb \
---output_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-2700.lite \
+--graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-4200.pb \
+--output_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-4200.lite \
 --output_format=TFLITE \
 --input_shapes=1,32,32,3 \
 --input_arrays=GPU_0/input_image \

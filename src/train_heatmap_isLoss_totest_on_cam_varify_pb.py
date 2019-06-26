@@ -61,7 +61,9 @@ if __name__ == '__main__':
             preheat_v = sess.run(y, feed_dict={x: image_raw12_crop[np.newaxis, :]})
 
             # 根据preheat_v 计算最有可能的指尖坐标，当手指指尖存在时更新坐标centerx， centery
-            if True: # pre_is_loss_v[0, 0] > pre_is_loss_v[0, 1]:
+            if True:  # pre_is_loss_v[0, 0] > pre_is_loss_v[0, 1]:
+                sum_preheat_v = np.sum(np.sum(np.sum(preheat_v, axis=0), axis=0), axis=0)
+                print(sum_preheat_v)
                 color_ = (0, 255, 0)
                 motion = preheat_v[0, :, :, 0] - preheat_v[0, :, :, 1]
                 raw, column = motion.shape
