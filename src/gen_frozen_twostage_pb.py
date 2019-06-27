@@ -27,8 +27,8 @@ from src.networks import get_network
 from src.general import NetworkOps
 
 ops = NetworkOps
-checkpoint_path = '/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/'
-model_name = 'model-4200'
+checkpoint_path = '/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/'
+model_name = 'model-9850'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
 parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
@@ -49,30 +49,13 @@ with tf.Graph().as_default(), tf.device("/cpu:0"):
             input_node = tf.placeholder(tf.float32, shape=[1, args.size, args.size, 3], name="input_image")
             with tf.variable_scope(tf.get_variable_scope(), reuse=False):
                 network_mv2_hourglass.N_KPOINTS = 2
+                network_mv2_hourglass.STAGE_NUM = 2
                 _, pred_heatmaps_all = get_network('mv2_hourglass', input_node, True)
             for loss_i in range(len(pred_heatmaps_all)):
-                # 计算 isloss，用softmax计算 0~1}
-                is_loss_s = pred_heatmaps_all[loss_i].get_shape().as_list()
-                pre_is_loss = tf.reshape(pred_heatmaps_all[loss_i],
-                                         [-1, is_loss_s[1] * is_loss_s[2] * is_loss_s[3]])  # this is Bx16*16*1
-                out_chan_list = [32, 16, 8, 2]
-                for i, out_chan in enumerate(out_chan_list):
-                    pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (loss_i, i),
-                                                           out_chan=out_chan, trainable=True)  # (128,1)
-
-                # 计算热度图
-                scale = 2
-                pred_heatmaps_tmp = upsample(pred_heatmaps_all[loss_i], scale,
-                                             name="upsample_for_hotmap_loss_%d" % loss_i)
-
-                # 用is loss 修正热度图
-                pre_is_loss = tf.nn.softmax(pre_is_loss)
-                pred_heatmaps_tmp_01_modi = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=1),
-                                                           axis=1) * pred_heatmaps_tmp
+                pred_heatmaps_tmp = pred_heatmaps_all[loss_i]
                 pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
-                pred_heatmaps_tmp_01_modi = tf.nn.softmax(pred_heatmaps_tmp_01_modi)
 
-            output_node_ufxuz = tf.add(pred_heatmaps_tmp_01_modi, 0, name='final_pred_heatmaps_tmp') #(1,4)
+            output_node_ufxuz = tf.add(pred_heatmaps_tmp, 0, name='final_pred_heatmaps_tmp') #(1,4)
     saver = tf.train.Saver(max_to_keep=10)
     init = tf.global_variables_initializer()
     config = tf.ConfigProto()
@@ -98,12 +81,12 @@ with tf.gfile.FastGFile(args.output_graph, "wb") as f:
 """
 cd ~/Downloads/tensorflow 
 bazel-bin/tensorflow/tools/graph_transforms/summarize_graph \
---in_graph=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-4200.pb
+--in_graph=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-4200.pb
 
 source activate TFlite
 tflite_convert \
---graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-4200.pb \
---output_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-128_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-4200.lite \
+--graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-9850.pb \
+--output_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-9850.lite \
 --output_format=TFLITE \
 --input_shapes=1,32,32,3 \
 --input_arrays=GPU_0/input_image \

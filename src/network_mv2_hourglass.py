@@ -7,7 +7,9 @@
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 
+from src.general import NetworkOps
 
+ops = NetworkOps
 from src.network_base import max_pool, upsample, inverted_bottleneck, separable_conv, convb, is_trainable
 
 N_KPOINTS = 1
@@ -21,35 +23,26 @@ up_channel_ratio = lambda d: int(d * 1.0)
 def hourglass_module(inp, stage_nums, l2s):
     if stage_nums > 0:
         down_sample = inp
-        #if stage_nums==3:
-        #    down_sample = max_pool(inp, 2, 2, 2, 2, name="hourglass_downsample_%d" % stage_nums)
-        #down_sample = inp
-        block_front = slim.stack(down_sample, inverted_bottleneck,
-                                 [
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                 ], scope="hourglass_front_%d" % stage_nums)
+
+        block_front = ops.conv_relu(down_sample, 'hourglass_front_0'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        block_front = ops.conv_relu(block_front, 'hourglass_front_1'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        block_front = ops.conv_relu(block_front, 'hourglass_front_2'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        block_front = ops.conv_relu(block_front, 'hourglass_front_3'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        block_front = ops.conv_relu(block_front, 'hourglass_front_4'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+
+
         stage_nums -= 1
         block_mid = hourglass_module(block_front, stage_nums, l2s)
-        block_back = inverted_bottleneck(
-            block_mid, up_channel_ratio(6), N_KPOINTS,
-            0, 3, scope="hourglass_back_%d" % stage_nums)
-        up_sample = block_back
-        #if stage_nums ==3:
-        #    up_sample = upsample(block_back, 2, "hourglass_upsample_%d" % stage_nums)
 
-        # jump layer
-        branch_jump = slim.stack(inp, inverted_bottleneck,
-                                 [
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                                     (up_channel_ratio(6), N_KPOINTS, 0, 3),
-                                 ], scope="hourglass_branch_jump_%d" % stage_nums)
+        block_back = ops.conv_relu(block_mid, 'hourglass_back_' + str(stage_nums), 3, 1, N_KPOINTS, True)
+
+        up_sample = block_back
+
+        branch_jump = ops.conv_relu(inp, 'hourglass_branch_jump_0'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        branch_jump = ops.conv_relu(branch_jump, 'hourglass_branch_jump_1'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        branch_jump = ops.conv_relu(branch_jump, 'hourglass_branch_jump_2'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        branch_jump = ops.conv_relu(branch_jump, 'hourglass_branch_jump_3'+str(stage_nums), 3, 1, out_channel_ratio(24), True)
+        branch_jump = ops.conv_relu(branch_jump, 'hourglass_branch_jump_4'+str(stage_nums), 3, 1, N_KPOINTS, True)
 
         curr_hg_out = tf.add(up_sample, branch_jump, name="hourglass_out_%d" % stage_nums)
         # mid supervise
@@ -57,10 +50,8 @@ def hourglass_module(inp, stage_nums, l2s):
 
         return curr_hg_out
 
-    _ = inverted_bottleneck(
-        inp, up_channel_ratio(6), out_channel_ratio(24),
-        0, 3, scope="hourglass_mid_%d" % stage_nums
-    )
+    _ = ops.conv_relu(inp, 'hourglass_mid_' + str(stage_nums), 3, 1, out_channel_ratio(24), True)
+
     return _
 
 
@@ -68,24 +59,16 @@ def build_network(input, trainable):
     l2s = []
     is_trainable(trainable)
 
-    net = convb(input, 3, 3, out_channel_ratio(16), 1, name="Conv2d_0")
+    net = ops.conv_relu(input, 'Conv2d_0', 3, 1, out_channel_ratio(16), True)
 
-    # 128, 112
-    net = slim.stack(net, inverted_bottleneck,
-                     [
-                         (1, out_channel_ratio(16), 0, 3),
-                         (1, out_channel_ratio(16), 0, 3)
-                     ], scope="Conv2d_1")
+    net = ops.conv_relu(net, 'Conv2d_1', 3, 1, out_channel_ratio(16), True)
+    net = ops.conv_relu(net, 'Conv2d_2', 3, 1, out_channel_ratio(16), True)
 
-    # 64, 56
-    net = slim.stack(net, inverted_bottleneck,
-                     [
-                         (up_channel_ratio(6), out_channel_ratio(24), 1, 3),
-                         (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                         (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                         (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                         (up_channel_ratio(6), out_channel_ratio(24), 0, 3),
-                     ], scope="Conv2d_2")
+    net = ops.conv_relu(net, 'Conv2d_3', 3, 1, out_channel_ratio(24), True)
+    net = ops.conv_relu(net, 'Conv2d_4', 3, 1, out_channel_ratio(24), True)
+    net = ops.conv_relu(net, 'Conv2d_5', 3, 1, out_channel_ratio(24), True)
+    net = ops.conv_relu(net, 'Conv2d_6', 3, 1, out_channel_ratio(24), True)
+    net = ops.conv_relu(net, 'Conv2d_7', 3, 1, out_channel_ratio(24), True)
 
     net_h_w = int(net.shape[1])
     # build network recursively
