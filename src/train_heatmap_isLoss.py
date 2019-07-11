@@ -220,7 +220,7 @@ def main(argv=None):
             checkpoint_path = os.path.join(params['modelpath'], training_name)
             model_name = '/model-187100'
             if checkpoint_path:
-                saver.restore(sess, checkpoint_path+model_name)
+                #saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
             total_step_num = params['num_train_samples'] * params['max_epoch'] // (params['batchsize']* 2 * params['gpus'])
 

@@ -56,12 +56,12 @@ class NetworkOps(object):
 
             return out_tensor
     @classmethod
-    def depthwise_conv(cls, in_tensor, layer_name, kernel_size, stride, out_chan, trainable=True):
+    def depthwise_conv(cls, in_tensor, layer_name, kernel_size, stride, trainable=True):
         with tf.variable_scope(layer_name):
             in_size = in_tensor.get_shape().as_list()
 
             strides = [1, stride, stride, 1]
-            kernel_shape = [kernel_size, kernel_size, in_size[3], out_chan]
+            kernel_shape = [kernel_size, kernel_size, in_size[3], 1]
 
             # conv
             kernel = tf.get_variable('weights', kernel_shape, tf.float32,
@@ -80,6 +80,21 @@ class NetworkOps(object):
         tensor = cls.conv(in_tensor, layer_name, kernel_size, stride, out_chan, trainable)
         out_tensor = cls.leaky_relu(tensor, name='out')
         return out_tensor
+
+    @classmethod
+    def conv_relu6(cls, in_tensor, layer_name, kernel_size, stride, out_chan, trainable=True):
+        tensor = cls.conv(in_tensor, layer_name, kernel_size, stride, out_chan, trainable)
+        out_tensor = cls.leaky_relu6(tensor, name='out')
+        return out_tensor
+
+    @classmethod
+    def inverted_bottleneck(cls, in_tensor, layer_name, kernel_size, stride, out_chan, trainable=True):
+        tensor = cls.conv_relu6(in_tensor, layer_name + '_up_pointwise', 1, 1, out_chan, trainable)
+        tensor = cls.depthwise_conv(tensor, layer_name + '_depthwise', kernel_size, stride, trainable)
+        tensor = cls.conv_relu6(tensor, layer_name + '_pointwise', 1, 1, out_chan, trainable)
+        if in_tensor.get_shape().as_list()[-1] == out_chan:
+            tensor = tf.add(in_tensor, tensor)
+        return tensor
 
     @classmethod
     def max_pool(cls, bottom, name='pool'):
