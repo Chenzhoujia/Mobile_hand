@@ -31,6 +31,10 @@ class NetworkOps(object):
     def leaky_relu(cls, tensor, name='relu'):
         out_tensor = tf.maximum(tensor, cls.neg_slope_of_relu*tensor, name=name)
         return out_tensor
+    @classmethod
+    def leaky_relu6(cls, tensor, name='relu'):
+        out_tensor = tf.minimum(tf.maximum(tensor, cls.neg_slope_of_relu*tensor), 6, name=name)
+        return out_tensor
 
     @classmethod
     def conv(cls, in_tensor, layer_name, kernel_size, stride, out_chan, trainable=True):
@@ -47,6 +51,25 @@ class NetworkOps(object):
 
             # bias
             biases = tf.get_variable('biases', [kernel_shape[3]], tf.float32,
+                                     tf.constant_initializer(0.0001), trainable=trainable, collections=['wd', 'variables', 'biases'])
+            out_tensor = tf.nn.bias_add(tmp_result, biases, name='out')
+
+            return out_tensor
+    @classmethod
+    def depthwise_conv(cls, in_tensor, layer_name, kernel_size, stride, out_chan, trainable=True):
+        with tf.variable_scope(layer_name):
+            in_size = in_tensor.get_shape().as_list()
+
+            strides = [1, stride, stride, 1]
+            kernel_shape = [kernel_size, kernel_size, in_size[3], out_chan]
+
+            # conv
+            kernel = tf.get_variable('weights', kernel_shape, tf.float32,
+                                     tf.contrib.layers.xavier_initializer_conv2d(), trainable=trainable, collections=['wd', 'variables', 'filters'])
+            tmp_result = tf.nn.depthwise_conv2d(in_tensor, kernel, strides, padding='SAME')
+
+            # bias
+            biases = tf.get_variable('biases', [in_size[3]], tf.float32,
                                      tf.constant_initializer(0.0001), trainable=trainable, collections=['wd', 'variables', 'biases'])
             out_tensor = tf.nn.bias_add(tmp_result, biases, name='out')
 

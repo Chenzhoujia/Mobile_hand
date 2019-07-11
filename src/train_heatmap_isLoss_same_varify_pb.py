@@ -47,7 +47,7 @@ if __name__ == '__main__':
     # We launch a Session
     with tf.Session(graph=graph) as sess:
         for step in range(128):
-            image_raw12_crop = np.loadtxt('/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/test_image.txt', delimiter=',')
+            image_raw12_crop = np.loadtxt('/home/chen/Documents/tensorflow-for-poets-2-end_of_first_codelab/android/tflite/app/src/main/res/raw/test_real_image.txt', delimiter=',')
             image_raw12_crop = image_raw12_crop[step, :]
             image_raw12_crop = np.reshape(image_raw12_crop, [32, 32, 3])
             tmp = image_raw12_crop[0, 1, :]

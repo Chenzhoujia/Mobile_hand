@@ -96,6 +96,7 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_
         pred_heatmaps_all_1 = ops.conv(input_image, 'conv1', 3, 1, 2, True)
         for i in range(5):
             pred_heatmaps_all_1 = ops.conv(pred_heatmaps_all_1, 'conv_'+str(i), 3, 1, 2, True)
+            pred_heatmaps_all_1 = ops.depthwise_conv(pred_heatmaps_all_1, 'depthwise_conv_'+str(i), 3, 1, 1, True)
             pred_heatmaps_all_1 = ops.conv_relu(pred_heatmaps_all_1, 'convrelu_'+str(i), 3, 1, 2, True)
         pred_heatmaps_all.append(pred_heatmaps_all_1)
     loss_scoremap = 0.0

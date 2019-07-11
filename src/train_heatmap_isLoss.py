@@ -218,7 +218,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-50'
+            model_name = '/model-187100'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
