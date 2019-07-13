@@ -21,7 +21,7 @@ ops = NetworkOps
 def upsample(inputs, factor, name):
     return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor],
                                     name=name)
-def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_variables=None):
+def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss = 0.0, reuse_variables=None):
     # 叠加在batch上重用特征提取网络
     input_image = tf.add(input_image, 0, name='input_image')
     with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
@@ -151,13 +151,8 @@ def main(argv=None):
                 with tf.name_scope("GPU_%d" % i):
                     #input_image, keypoint_xyz, keypoint_uv, input_heat, keypoint_vis, k, num_px_left_hand, num_px_right_hand \
                     batch_data_all = dataset_RHD.get_batch_data
-                    input_image1 = batch_data_all[8]
-                    input_image2 = batch_data_all[10]
-                    hand_motion = batch_data_all[9]
-                    scoremap1 = batch_data_all[11]
-                    scoremap2 = batch_data_all[12]
-                    is_loss1 = batch_data_all[13]
-                    is_loss2 = batch_data_all[14]
+                    input_image1 = batch_data_all[2]
+                    scoremap1 = batch_data_all[4]
 
                     # input_image = tf.concat([input_image1, input_image1_back], 0) #第一个batch的维度 hand1 back1
                     # scoremap = tf.concat([scoremap1, scoremap1_back], 0)
@@ -165,25 +160,25 @@ def main(argv=None):
 
                     input_image = input_image1
                     scoremap = scoremap1
-                    is_loss = is_loss1
+                    # is_loss = is_loss1
 
 
                     # 计算一个scoremap的loss
-                    scoremap = tf.reduce_sum(scoremap, axis=-1)
+                    #scoremap = tf.reduce_sum(scoremap, axis=-1)
                     one_scoremap = tf.ones_like(scoremap)
                     scoremap = tf.where(scoremap > 1, x=one_scoremap, y=scoremap)
                     scoremap = tf.expand_dims(scoremap, axis=-1)
                     scoremap = tf.concat([scoremap, 1-scoremap], axis=-1)
 
-                    is_loss = tf.expand_dims(is_loss, axis=-1)
-                    is_loss = tf.concat([is_loss, 1 - is_loss], axis=-1)
+                    # is_loss = tf.expand_dims(is_loss, axis=-1)
+                    # is_loss = tf.concat([is_loss, 1 - is_loss], axis=-1)
 
                     """
                     model, batchsize, input_image, scoremap, is_loss, reuse_variables=None
                     total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_01_modi
                     """
                     loss, preheat = get_loss_and_output(params['model'], params['batchsize'],
-                                                input_image, scoremap, is_loss, reuse_variable)
+                                                input_image, scoremap)
 
                     grads = opt.compute_gradients(loss)
                     tower_grads.append(grads)
@@ -218,9 +213,9 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-187100'
+            model_name = '/model-45050'
             if checkpoint_path:
-                #saver.restore(sess, checkpoint_path+model_name)
+                saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
             total_step_num = params['num_train_samples'] * params['max_epoch'] // (params['batchsize']* 2 * params['gpus'])
 
@@ -284,22 +279,15 @@ def main(argv=None):
 
                     fig = plt.figure(1)
                     plt.clf()
-                    ax1 = fig.add_subplot(2, 3, 1)
+                    ax1 = fig.add_subplot(3, 1, 1)
                     ax1.imshow(input_image_v[0, :, :, :])#第一个batch的维度 hand1(0~31) back1(32~63)
                     ax1.axis('off')
 
-                    ax2 = fig.add_subplot(2, 3, 2)
+                    ax2 = fig.add_subplot(3, 1, 2)
                     ax2.imshow(scoremap_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
 
-                    ax6 = fig.add_subplot(2, 3, 5)
-                    ax6.imshow(scoremap_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-
-
-                    ax3 = fig.add_subplot(2, 3, 3)
-                    ax3.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-
-                    ax7 = fig.add_subplot(2, 3, 6)
-                    ax7.imshow(preheat_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
+                    ax6 = fig.add_subplot(3, 1, 3)
+                    ax6.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
 
                     plt.savefig(os.path.join(params['logpath']) + "/" + str(step).zfill(10) + "_.png")
 

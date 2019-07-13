@@ -28,9 +28,17 @@ class BaseDataset(object):
         """ Creates a map of size (output_shape[0], output_shape[1]) at (center[0], center[1])
             with variance sigma for multiple coordinates."""
         with tf.name_scope('create_multiple_gaussian_map'):
-            sigma = tf.cast(sigma, tf.float32)
+            sigma = tf.cast(sigma/2, tf.float32)
             assert len(output_size) == 2
+            coords_uv = tf.concat([tf.expand_dims(coords_uv[1, :], 0), tf.expand_dims(coords_uv[5, :], 0)
+                                       , tf.expand_dims(coords_uv[9, :], 0), tf.expand_dims(coords_uv[13, :], 0)
+                                       , tf.expand_dims(coords_uv[17, :], 0)], 0)
+
+            valid_vec = tf.concat([tf.expand_dims(valid_vec[1], 0), tf.expand_dims(valid_vec[5], 0)
+                                       , tf.expand_dims(valid_vec[9], 0), tf.expand_dims(valid_vec[13], 0)
+                                       , tf.expand_dims(valid_vec[17], 0)], 0)
             s = coords_uv.get_shape().as_list()
+
             coords_uv = tf.cast(coords_uv, tf.int32)
             if valid_vec is not None:
                 valid_vec = tf.cast(valid_vec, tf.float32)
@@ -68,6 +76,6 @@ class BaseDataset(object):
 
             dist = tf.square(X_b) + tf.square(Y_b)
 
-            scoremap = tf.exp(-dist / tf.square(sigma)) * tf.cast(cond, tf.float32)
+            scoremap = tf.exp(-dist / sigma) * tf.cast(cond, tf.float32)
 
             return scoremap
