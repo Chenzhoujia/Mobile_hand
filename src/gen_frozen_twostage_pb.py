@@ -28,7 +28,7 @@ from src.general import NetworkOps
 
 ops = NetworkOps
 checkpoint_path = '/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/'
-model_name = 'model-7000'
+model_name = 'model-26000'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 parser = argparse.ArgumentParser(description='Tensorflow Pose Estimation Graph Extractor')
 parser.add_argument('--model', type=str, default='mv2_hourglass', help='')
@@ -46,7 +46,7 @@ def upsample(inputs, factor, name):
 with tf.Graph().as_default(), tf.device("/cpu:0"):
     with tf.device("/gpu:%d" % i):
         with tf.name_scope("GPU_%d" % i):
-            input_node = tf.placeholder(tf.float32, shape=[1, args.size, args.size, 3], name="input_image")
+            input_node = tf.placeholder(tf.float32, shape=[1, args.size, args.size*5, 3], name="input_image")
             with tf.variable_scope(tf.get_variable_scope(), reuse=False):
                 network_mv2_hourglass.N_KPOINTS = 2
                 network_mv2_hourglass.STAGE_NUM = 2
@@ -85,10 +85,10 @@ bazel-bin/tensorflow/tools/graph_transforms/summarize_graph \
 
 source activate TFlite
 tflite_convert \
---graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-7000.pb \
---output_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-7000.lite \
+--graph_def_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-26000.pb \
+--output_file=/home/chen/Documents/Mobile_hand/experiments/trained/depart/models/mv2_hourglass_batch-64_lr-0.001_gpus-1_32x32_..-experiments-mv2_hourglass_heatmap/model-26000.lite \
 --output_format=TFLITE \
---input_shapes=1,32,32,3 \
+--input_shapes=1,32,160,3 \
 --input_arrays=GPU_0/input_image \
 --output_arrays=GPU_0/final_pred_heatmaps_tmp \
 --inference_type=FLOAT

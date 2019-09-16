@@ -21,7 +21,7 @@ ops = NetworkOps
 def upsample(inputs, factor, name):
     return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor],
                                     name=name)
-def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss = 0.0, reuse_variables=None):
+def get_loss_and_output(model, batchsize, input_image, scoremap, finger_mask_sum, reuse_variables=None):
     # 叠加在batch上重用特征提取网络
     input_image = tf.add(input_image, 0, name='input_image')
     with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
@@ -29,7 +29,15 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss = 0.0, 
         network_mv2_hourglass.STAGE_NUM = 2
         _, pred_heatmaps_all = get_network(model, input_image, True) #第一个batch的维度 hand back
 
+        # # 将估计的最后一层用全连接连到 5，再用5*5*5*5来个几层估计最后的结果
+        # z_rate_pre = ops.max_pool(tf.expand_dims(pred_heatmaps_all[-1][:,:,:,0], axis=-1))
+        # z_rate_pre = tf.reshape(z_rate_pre, [batchsize, 16*80])
+        # z_rate_pre = ops.fully_connected_relu(z_rate_pre, "z_rate_Pro", 5)
+        # for i_z in range(5):
+        #     z_rate_pre = ops.fully_connected_relu(z_rate_pre, "z_rate_"+str(i_z), 5)
+        #
     loss_scoremap = 0.0
+    # loss_zrate = 0.0
     loss_scoremap_m = 0.0
     loss_is_loss = 0.0
     for loss_i in range(len(pred_heatmaps_all)):
@@ -53,7 +61,7 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss = 0.0, 
         pred = tf.reshape(pred_heatmaps_tmp, [batchsize * s[1] * s[2], -1])
         loss_scoremap += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=pred, labels=gt))
         pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
-
+        # loss_zrate += tf.reduce_mean(tf.abs(z_rate_pre - finger_mask_sum))
         # one_tmp = tf.ones_like(pred_heatmaps_tmp)
         # zero_tmp = tf.zeros_like(pred_heatmaps_tmp)
         # pred_heatmaps_tmp_01 = tf.where(pred_heatmaps_tmp > 1, x=one_tmp, y=pred_heatmaps_tmp)
@@ -69,14 +77,15 @@ def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss = 0.0, 
         #
         # pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
         # pred_heatmaps_tmp_modi = tf.nn.softmax(pred_heatmaps_tmp_modi)
+    #
 
     # loss_is_loss = loss_is_loss
     # loss_scoremap = loss_scoremap
     # loss_scoremap_m = loss_scoremap_m
 
-    total_loss = loss_scoremap# + loss_is_loss + loss_scoremap_m
+    total_loss = loss_scoremap#*3 + loss_zrate*0.001# + loss_is_loss + loss_scoremap_m
     #return total_loss, loss_is_loss, loss_scoremap, loss_scoremap_m, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_modi
-    return total_loss, pred_heatmaps_tmp
+    return total_loss, pred_heatmaps_tmp#, [total_loss, loss_scoremap, loss_zrate, z_rate_pre, finger_mask_sum]
 
 def average_gradients(tower_grads):
     """
@@ -151,6 +160,7 @@ def main(argv=None):
                 with tf.name_scope("GPU_%d" % i):
                     #input_image, keypoint_xyz, keypoint_uv, input_heat, keypoint_vis, k, num_px_left_hand, num_px_right_hand \
                     batch_data_all = dataset_RHD.get_batch_data
+                    finger_mask_sum1 = batch_data_all[1]
                     input_image1 = batch_data_all[2]
                     scoremap1 = batch_data_all[4]
 
@@ -174,11 +184,11 @@ def main(argv=None):
                     # is_loss = tf.concat([is_loss, 1 - is_loss], axis=-1)
 
                     """
-                    model, batchsize, input_image, scoremap, is_loss, reuse_variables=None
-                    total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_01_modi
+                    [total_loss, loss_scoremap, loss_zrate, z_rate_pre]
+                     , [total_loss, loss_scoremap, loss_zrate, z_rate_pre, finger_mask_sum]
                     """
-                    loss, preheat = get_loss_and_output(params['model'], params['batchsize'],
-                                                input_image, scoremap)
+                    loss, preheat= get_loss_and_output(params['model'], params['batchsize'],
+                                                input_image, scoremap, finger_mask_sum1)
 
                     grads = opt.compute_gradients(loss)
                     tower_grads.append(grads)
@@ -213,7 +223,7 @@ def main(argv=None):
         with tf.Session(config=config) as sess:
             init.run()
             checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = '/model-45050'
+            model_name = '/model-700'
             if checkpoint_path:
                 saver.restore(sess, checkpoint_path+model_name)
                 print("restore from " + checkpoint_path+model_name)
@@ -223,7 +233,9 @@ def main(argv=None):
             for step in tqdm(range(total_step_num)):
                 _, loss_value = sess.run([train_op, loss])
                 if step % params['per_update_tensorboard_step'] == 0:
-                    loss_v, input_image_v, scoremap_v, preheat_v = sess.run([loss, input_image, scoremap, preheat])
+                    # [total_loss, loss_scoremap, loss_zrate, z_rate_pre]
+                    loss_v, input_image_v, scoremap_v, preheat_v= sess.run([loss, input_image, scoremap, preheat])
+                                                                             #loss_scoremap, loss_zrate, z_rate_pre, finger_mask_sum])
                     input_image_v_r = np.reshape(input_image_v, [params['batchsize'], -1])
                     #np.savetxt(checkpoint_path+"/test_image.txt", input_image_v_r, fmt='%f', delimiter=',')
 
@@ -283,17 +295,21 @@ def main(argv=None):
                     ax1.imshow(input_image_v[0, :, :, :])#第一个batch的维度 hand1(0~31) back1(32~63)
                     ax1.axis('off')
 
+
                     ax2 = fig.add_subplot(3, 1, 2)
                     ax2.imshow(scoremap_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
 
                     ax6 = fig.add_subplot(3, 1, 3)
                     ax6.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-
+                    # ax2.set_title(str([round(i,4) for i in finger_mask_sum_v[0]]),fontsize=10)
+                    # ax6.set_title(str([round(i,4) for i in z_rate_pre_v[0]]),fontsize=10)
+                    ax2.axis('off')
+                    ax6.axis('off')
                     plt.savefig(os.path.join(params['logpath']) + "/" + str(step).zfill(10) + "_.png")
 
                     # print("loss:"+str(loss_v), " is_loss_loss:"+str(loss_is_loss_v)+" scoremap_loss:"
                     #       +str(loss_scoremap_v)+" scoremap_loss:"+str(loss_scoremap_m_v))
-                    print("loss:"+str(loss_v))
+                    print("loss:"+str(loss_v))#+"loss_scoremap_v: "+str(loss_scoremap_v)+"loss_zrate_v: "+str(loss_zrate_v))
 
                     # save model
                 if step % params['per_saved_model_step'] == 0:

@@ -475,7 +475,7 @@ class RHD(BaseDataset):
 
 
 
-        return image, finger_mask_sum, \
+        return image, finger_mask_sum/(32*32)*2, \
                image_crop, hand_parts_mask_crop, scoremap
 
     """
