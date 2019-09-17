@@ -811,12 +811,13 @@ class RHD(BaseDataset):
 
         return image_crop2_comb, hand_motion, image_crop2_comb2, scoremap, scoremap2, is_loss1, is_loss2
 
-# dataset_RHD = RHD()
-# with tf.Session() as sess:
-#
-#     for i in tqdm(range(dataset_RHD.example_num)):
-#         image, finger_mask_sum, \
-#         image_crop, hand_parts_mask_crop, scoremap = sess.run(dataset_RHD.get_batch_data)
-#
-#         RHD.visualize_data(image[0], finger_mask_sum[0], \
-#                            image_crop[0], hand_parts_mask_crop[0], scoremap[0])
+if __name__ == '__main__':
+    dataset_RHD = RHD()
+    with tf.Session() as sess:
+
+        for i in tqdm(range(dataset_RHD.example_num)):
+            image, finger_mask_sum, \
+            image_crop, hand_parts_mask_crop, scoremap = sess.run(dataset_RHD.get_batch_data)
+
+            RHD.visualize_data(image[0], finger_mask_sum[0], \
+                               image_crop[0], hand_parts_mask_crop[0], scoremap[0])
