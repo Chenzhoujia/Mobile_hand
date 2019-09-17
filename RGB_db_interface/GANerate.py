@@ -133,11 +133,23 @@ def plot_hand_3d(coords_xyz, axis, color_fixed=None, linewidth='1'):
             axis.plot(coords[:, 0], coords[:, 1], coords[:, 2], color_fixed, linewidth=linewidth)
 
     axis.view_init(azim=-90., elev=90.)
-class RHD(BaseDataset):
-    def __init__(self, path="/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/ICCV2017/RHD_published_v2", batchnum = 4):
-        super(RHD, self).__init__(path)
-
+class GANerate(BaseDataset):
+    def __init__(self, path="/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/GANeratedHands_Release/data",
+                 batchnum=4):
         # 将标签加载到内存中
+        """
+        For every frame, the following data is provided:
+        - color: 			24-bit color image of the hand (cropped)
+        - joint_pos: 		3D joint positions relative to the middle MCP joint. The values are normalized such that the length between middle finger MCP and wrist is 1.
+                            The positions are organized as a linear concatenation of the x,y,z-position of every joint (joint1_x, joint1_y, joint1_z, joint2_x, ...).
+                            The order of the 21 joints is as follows: W, T0, T1, T2, T3, I0, I1, I2, I3, M0, M1, M2, M3, R0, R1, R2, R3, L0, L1, L2, L3.
+                            Please also see joints.png for a visual explanation.
+        - joint2D:			2D joint positions in u,v image coordinates. The positions are organized as a linear concatenation of the u,v-position of every joint (joint1_u, joint1_v, joint2_u, …).
+        - joint_pos_global:	3D joint positions in the coordinate system of the original camera (before cropping)
+        - crop_params:		cropping parameters that were used to generate the color image (256 x 256 pixels) from the original image (640 x 480 pixels),
+                            specified as top left corner of the bounding box (u,v) and a scaling factor
+        """
+        super().__init__(path)
         with open(self.path+"/training/anno_training.pickle", 'rb') as fi:
             anno_all = pickle.load(fi)
         self.allxyz = np.zeros(shape=[len(anno_all), 42, 3], dtype=np.float32)
