@@ -133,6 +133,55 @@ def plot_hand_3d(coords_xyz, axis, color_fixed=None, linewidth='1'):
             axis.plot(coords[:, 0], coords[:, 1], coords[:, 2], color_fixed, linewidth=linewidth)
 
     axis.view_init(azim=-90., elev=90.)
+
+def create_multiple_gaussian_map(coords_uv, output_size, sigma = 25.0, valid_vec=None):
+    """ Creates a map of size (output_shape[0], output_shape[1]) at (center[0], center[1])
+        with variance sigma for multiple coordinates."""
+    with tf.name_scope('create_multiple_gaussian_map'):
+        sigma = tf.cast(sigma, tf.float32)
+        assert len(output_size) == 2
+        s = coords_uv.get_shape().as_list()
+        coords_uv = tf.cast(coords_uv, tf.int32)
+        if valid_vec is not None:
+            valid_vec = tf.cast(valid_vec, tf.float32)
+            valid_vec = tf.squeeze(valid_vec)
+            cond_val = tf.greater(valid_vec, 0.5)
+        else:
+            cond_val = tf.ones_like(coords_uv[:, 0], dtype=tf.float32)
+            cond_val = tf.greater(cond_val, 0.5)
+
+        cond_1_in = tf.logical_and(tf.less(coords_uv[:, 1], output_size[0]-1), tf.greater(coords_uv[:, 1], 0))
+        cond_2_in = tf.logical_and(tf.less(coords_uv[:, 0], output_size[1]-1), tf.greater(coords_uv[:, 0], 0))
+        cond_in = tf.logical_and(cond_1_in, cond_2_in)
+        cond = tf.logical_and(cond_val, cond_in)
+
+        coords_uv = tf.cast(coords_uv, tf.float32)
+
+        # create meshgrid
+        x_range = tf.expand_dims(tf.range(output_size[0]), 1)
+        y_range = tf.expand_dims(tf.range(output_size[1]), 0)
+
+        X = tf.cast(tf.tile(x_range, [1, output_size[1]]), tf.float32)
+        Y = tf.cast(tf.tile(y_range, [output_size[0], 1]), tf.float32)
+
+        X.set_shape((output_size[0], output_size[1]))
+        Y.set_shape((output_size[0], output_size[1]))
+
+        X = tf.expand_dims(X, -1)
+        Y = tf.expand_dims(Y, -1)
+
+        X_b = tf.tile(X, [1, 1, s[0]])
+        Y_b = tf.tile(Y, [1, 1, s[0]])
+
+        X_b -= coords_uv[:, 1]
+        Y_b -= coords_uv[:, 0]
+
+        dist = tf.square(X_b) + tf.square(Y_b)
+
+        scoremap = tf.exp(-dist / tf.square(sigma)) * tf.cast(cond, tf.float32)
+
+        return scoremap
+
 class GANerate(BaseDataset):
     def __init__(self, path="/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/GANeratedHands_Release/data",
                  batchnum=4):
@@ -150,28 +199,63 @@ class GANerate(BaseDataset):
                             specified as top left corner of the bounding box (u,v) and a scaling factor
         """
         super().__init__(path)
-        with open(self.path+"/training/anno_training.pickle", 'rb') as fi:
-            anno_all = pickle.load(fi)
-        self.allxyz = np.zeros(shape=[len(anno_all), 42, 3], dtype=np.float32)
-        self.alluv = np.zeros(shape=[len(anno_all), 42, 3], dtype=np.float32)
-        self.allk = np.zeros(shape=[len(anno_all), 3, 3], dtype=np.float32)
-        for label_i in range(len(anno_all)):
-            self.allxyz[label_i,:,:] = anno_all[label_i]['xyz']
-            self.alluv[label_i, :, :] = anno_all[label_i]['uv_vis']
-            self.allk[label_i, :, :] = anno_all[label_i]['K']
+        # 太慢了 结果放在cache中
+        # for sub in tqdm(range(1,142)):
+        #     imagefilenames = BaseDataset.listdir(self.path+'/noObject/'+str(sub).zfill(4))
+        #     file = open('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache/GANerate'+str(sub).zfill(4)+'.txt', 'w')
+        #     for fp in imagefilenames:
+        #         file.write(str(fp))
+        #         file.write('\n')
 
-        # 将图像文件名列表加载到内存中
-        imagefilenames = BaseDataset.listdir(self.path+"/training/color")
-        self.example_num = len(imagefilenames)
-        maskfilenames = BaseDataset.listdir(self.path+"/training/mask")
+        # 太慢了 结果放在cache中
+        # imagefilenames = BaseDataset.listdir('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache')
+        # GAN_color_path = []
+        # joint2D = np.zeros([1024*141,21*2])
+        # joint_pos = np.zeros([1024*141,21*3])
+        # self.sample_num = 0
+        # for fp in tqdm(range(len(imagefilenames))):
+        #
+        #     list_tmp = self.ReadTxtName(imagefilenames[fp])
+        #     list_tmp = np.array(list_tmp)
+        #     list_tmp = list_tmp.reshape((-1,5))
+        #     # 读取fp中的4行，检查是不是一个文件，保存color joint_pos joint2D
+        #     for one_sample_id in range(list_tmp.shape[0]):
+        #         one_sample = list_tmp[one_sample_id]
+        #         # 检查
+        #         assert one_sample[0].endswith('_color_composed.png') and \
+        #                one_sample[1].endswith('_crop_params.txt') and \
+        #                one_sample[2].endswith('_joint2D.txt') and \
+        #                one_sample[3].endswith('_joint_pos.txt') and \
+        #                one_sample[4].endswith('_joint_pos_global.txt'), "data path error !!"
+        #         assert one_sample[0][-19-4:-19] == one_sample[2][-12-4:-12] and \
+        #                one_sample[2][-12 - 4:-12] == one_sample[3][-14 - 4:-14], "data path error2!!"
+        #         # 保存
+        #         GAN_color_path.append(one_sample[0])
+        #         joint2D[self.sample_num] = np.loadtxt(one_sample[2], delimiter=',')
+        #         joint_pos[self.sample_num] = np.loadtxt(one_sample[3], delimiter=',')
+        #         self.sample_num = self.sample_num + 1
+        # joint2D = joint2D[:self.sample_num]
+        # joint_pos = joint_pos[:self.sample_num]
+        # file = open('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache' + "/GAN_color_path.txt", 'w')
+        # for fp in GAN_color_path:
+        #     file.write(str(fp))
+        #     file.write('\n')
+        # np.savetxt('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache' + "/joint2D.txt", joint2D, fmt='%f', delimiter=',')
+        # np.savetxt('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache' + "/joint_pos.txt", joint_pos, fmt='%f', delimiter=',')
 
-        assert self.example_num == len(anno_all), '标签和样本数量不一致'
+        self.joint2D = np.loadtxt('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache/joint2D.txt', delimiter=',')
+        self.joint_pos = np.loadtxt('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache/joint_pos.txt', delimiter=',')
+        self.GAN_color_path = self.ReadTxtName('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache/GAN_color_path.txt')
+        self.sample_num = len(self.GAN_color_path)
+        self.joint2D = np.reshape(self.joint2D,[-1,21,2])
+        self.joint_pos = np.reshape(self.joint_pos,[-1,21,3])
 
-        self.maskfilenames = tf.constant(maskfilenames)
-        self.imagefilenames = tf.constant(imagefilenames)
+        self.imagefilenames = tf.constant(self.GAN_color_path)
+
+
         # 创建正经数据集
-        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.maskfilenames, self.allxyz, self.alluv, self.allk))
-        dataset = dataset.map(RHD._parse_function)
+        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.joint2D, self.joint_pos))
+        dataset = dataset.map(GANerate._parse_function)
         dataset = dataset.repeat()
         dataset = dataset.shuffle(buffer_size=320)
         self.dataset = dataset.batch(batchnum)
@@ -181,7 +265,7 @@ class GANerate(BaseDataset):
 
 
     @staticmethod
-    def visualize_data(image_crop, keypoint_uv21, keypoint_xyz21_normed):
+    def visualize_data(image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed):
         # get info from annotation dictionary
 
         image_crop = (image_crop + 0.5) * 255
@@ -191,223 +275,59 @@ class GANerate(BaseDataset):
         # visualize
         fig = plt.figure(1)
         plt.clf()
-        ax1 = fig.add_subplot(121)
-        ax2 = fig.add_subplot(122, projection='3d')
+        ax1 = fig.add_subplot(221)
+        ax2 = fig.add_subplot(222, projection='3d')
         ax1.imshow(image_crop)
         #plot_hand(keypoint_uv21, ax1)
         ax1.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
         #ax1.scart(keypoint_uv21[:, 0], keypoint_uv21[:, 1], color=color, linewidth=1)
         plot_hand_3d(keypoint_xyz21_normed, ax2)
         ax2.view_init(azim=-90.0, elev=-90.0)  # aligns the 3d coord with the camera view
-        ax2.set_xlim([-3, 3])
-        ax2.set_ylim([-3, 3])
-        ax2.set_zlim([-3, 3])
+        ax2.set_xlim([-2, 2])
+        ax2.set_ylim([-2, 2])
+        ax2.set_zlim([-2, 2])
 
+        ax3 = fig.add_subplot(223)
+        ax3.imshow(np.sum(keypoint_uv_heatmap, axis=-1))  # 第一个batch的维度 hand1(0~31) back1(32~63)
+        ax3.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
         now = time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime(time.time()))
         plt.savefig('/tmp/image/'+now+'.png')
 
     @staticmethod
-    def _parse_function(imagefilename, maskfilename, keypoint_xyz, keypoint_uv, k):
+    def _parse_function(imagefilename, keypoint_uv, keypoint_xyz):
         # 数据的基本处理
-        image_size = (320, 320)
+        image_size = (256, 256)
         image_string = tf.read_file(imagefilename)
         image_decoded = tf.image.decode_png(image_string)
-        image_decoded = tf.image.resize_images(image_decoded, [320, 320], method=0)
+        image_decoded = tf.image.resize_images(image_decoded, [256, 256], method=0)
         image_decoded.set_shape([image_size[0],image_size[0],3])
         image = tf.cast(image_decoded, tf.float32)
         image = image / 255.0 - 0.5
 
-        mask_string = tf.read_file(maskfilename)
-        mask_decoded = tf.image.decode_png(mask_string)
-        hand_parts_mask = tf.cast(mask_decoded, tf.int32)
-        hand_parts_mask.set_shape([image_size[0],image_size[0],1])
 
-        keypoint_vis = tf.cast(keypoint_uv[:, 2], tf.bool)
-        keypoint_uv = keypoint_uv[:, :2]
-
-        # general parameters
-        coord_uv_noise = False
-        coord_uv_noise_sigma = 1.0  # std dev in px of noise on the uv coordinates
-        crop_center_noise = True
-        crop_center_noise_sigma = 20.0  # std dev in px: this moves what is in the "center", but the crop always contains all keypoints
-        crop_offset_noise = False
-        crop_offset_noise_sigma = 10.0  # translates the crop after size calculation (this can move keypoints outside)
-        crop_scale_noise_ = False
-        crop_size = 192
-        hand_crop = True
-        hue_aug = False
-        hue_aug_max = 0.1
-        sigma = 6.0
-        use_wrist_coord = False
-
-        # 使用掌心代替手腕
-        if not use_wrist_coord:
-            palm_coord_l = tf.expand_dims(0.5*(keypoint_xyz[0, :] + keypoint_xyz[12, :]), 0)
-            palm_coord_r = tf.expand_dims(0.5*(keypoint_xyz[21, :] + keypoint_xyz[33, :]), 0)
-            keypoint_xyz = tf.concat([palm_coord_l, keypoint_xyz[1:21, :], palm_coord_r, keypoint_xyz[-20:, :]], 0)
-
-        if not use_wrist_coord:
-            palm_coord_uv_l = tf.expand_dims(0.5*(keypoint_uv[0, :] + keypoint_uv[12, :]), 0)
-            palm_coord_uv_r = tf.expand_dims(0.5*(keypoint_uv[21, :] + keypoint_uv[33, :]), 0)
-            keypoint_uv = tf.concat([palm_coord_uv_l, keypoint_uv[1:21, :], palm_coord_uv_r, keypoint_uv[-20:, :]], 0)
-
-        if coord_uv_noise:
-            noise = tf.truncated_normal([42, 2], mean=0.0, stddev=coord_uv_noise_sigma)
-            keypoint_uv += noise
-
-        if hue_aug:
-            image = tf.image.random_hue(image, hue_aug_max)
-
-        # calculate palm visibility
-        if not use_wrist_coord:
-            palm_vis_l = tf.expand_dims(tf.logical_or(keypoint_vis[0], keypoint_vis[12]), 0)
-            palm_vis_r = tf.expand_dims(tf.logical_or(keypoint_vis[21], keypoint_vis[33]), 0)
-            keypoint_vis = tf.concat([palm_vis_l, keypoint_vis[1:21], palm_vis_r, keypoint_vis[-20:]], 0)
-
-        # 数据的高级处理
-        # figure out dominant hand by analysis of the segmentation mask
-        one_map, zero_map = tf.ones_like(hand_parts_mask), tf.zeros_like(hand_parts_mask)
-        cond_l = tf.logical_and(tf.greater(hand_parts_mask, one_map), tf.less(hand_parts_mask, one_map*18))
-        cond_r = tf.greater(hand_parts_mask, one_map*17)
-        hand_map_l = tf.where(cond_l, one_map, zero_map)
-        hand_map_r = tf.where(cond_r, one_map, zero_map)
-        num_px_left_hand = tf.reduce_sum(hand_map_l)
-        num_px_right_hand = tf.reduce_sum(hand_map_r)
-
-        # We only deal with the more prominent hand for each frame and discard the second set of keypoints
-        kp_coord_xyz_left = keypoint_xyz[:21, :]
-        kp_coord_xyz_right = keypoint_xyz[-21:, :]
-
-        cond_left = tf.logical_and(tf.cast(tf.ones_like(kp_coord_xyz_left), tf.bool), tf.greater(num_px_left_hand, num_px_right_hand))
-        kp_coord_xyz21 = tf.where(cond_left, kp_coord_xyz_left, kp_coord_xyz_right)
-
-        hand_side = tf.where(tf.greater(num_px_left_hand, num_px_right_hand),
-                             tf.constant(0, dtype=tf.int32),
-                             tf.constant(1, dtype=tf.int32))  # left hand = 0; right hand = 1
-        hand_side = tf.one_hot(hand_side, depth=2, on_value=1.0, off_value=0.0, dtype=tf.float32)
-
-        keypoint_xyz21 = kp_coord_xyz21
-        #对xyz标签进行标准化
-        # make coords relative to root joint
-        kp_coord_xyz_root = kp_coord_xyz21[0, :] # this is the palm coord
-        kp_coord_xyz21_rel = kp_coord_xyz21 - kp_coord_xyz_root  # relative coords in metric coords
-        index_root_bone_length = tf.sqrt(tf.reduce_sum(tf.square(kp_coord_xyz21_rel[12, :] - kp_coord_xyz21_rel[11, :])))
-        keypoint_xyz21_normed = kp_coord_xyz21_rel / (index_root_bone_length+0.0001)  # normalized by length of 12->11
-
-        # calculate local coordinates
-        kp_coord_xyz21_local = bone_rel_trafo(keypoint_xyz21_normed)
-        kp_coord_xyz21_local = tf.squeeze(kp_coord_xyz21_local)
-        keypoint_xyz21_local = kp_coord_xyz21_local
-
-        # calculate viewpoint and coords in canonical coordinates
-        kp_coord_xyz21_rel_can, rot_mat = canonical_trafo(keypoint_xyz21_normed)
-        kp_coord_xyz21_rel_can, rot_mat = tf.squeeze(kp_coord_xyz21_rel_can), tf.squeeze(rot_mat)
-        kp_coord_xyz21_rel_can = flip_right_hand(kp_coord_xyz21_rel_can, tf.logical_not(cond_left))
-        keypoint_xyz21_can = kp_coord_xyz21_rel_can
-        rot_mat = tf.matrix_inverse(rot_mat)
-
-        # Set of 21 for visibility
-        keypoint_vis_left = keypoint_vis[:21]
-        keypoint_vis_right = keypoint_vis[-21:]
-        keypoint_vis21 = tf.where(cond_left[:, 0], keypoint_vis_left, keypoint_vis_right)
-        keypoint_vis21 = keypoint_vis21
-
-        # Set of 21 for UV coordinates
-        keypoint_uv_left = keypoint_uv[:21, :]
-        keypoint_uv_right = keypoint_uv[-21:, :]
-        keypoint_uv21 = tf.where(cond_left[:, :2], keypoint_uv_left, keypoint_uv_right)
-
-        """ DEPENDENT DATA ITEMS: HAND CROP """
-        if hand_crop:
-            crop_center = keypoint_uv21[12, ::-1]
-
-            # catch problem, when no valid kp available (happens almost never)
-            crop_center = tf.cond(tf.reduce_all(tf.is_finite(crop_center)), lambda: crop_center,
-                                  lambda: tf.constant([0.0, 0.0]))
-            crop_center.set_shape([2, ])
-
-            if crop_center_noise:
-                noise = tf.truncated_normal([2], mean=0.0, stddev=crop_center_noise_sigma)
-                crop_center += noise
-
-            crop_scale_noise = tf.constant(1.0)
-            if crop_scale_noise_:
-                crop_scale_noise = tf.squeeze(tf.random_uniform([1], minval=1.0, maxval=1.2))
-
-            # select visible coords only
-            kp_coord_h = tf.boolean_mask(keypoint_uv21[:, 1], keypoint_vis21)
-            kp_coord_w = tf.boolean_mask(keypoint_uv21[:, 0], keypoint_vis21)
-            kp_coord_hw = tf.stack([kp_coord_h, kp_coord_w], 1)
-
-            # determine size of crop (measure spatial extend of hw coords first)
-            min_coord = tf.maximum(tf.reduce_min(kp_coord_hw, 0), 0.0)
-            max_coord = tf.minimum(tf.reduce_max(kp_coord_hw, 0), image_size)
-
-            # find out larger distance wrt the center of crop
-            crop_size_best = 2*tf.maximum(max_coord - crop_center, crop_center - min_coord)
-            crop_size_best = tf.reduce_max(crop_size_best)
-            crop_size_best = tf.minimum(tf.maximum(crop_size_best, 50.0), 500.0)
-
-            # catch problem, when no valid kp available
-            crop_size_best = tf.cond(tf.reduce_all(tf.is_finite(crop_size_best)), lambda: crop_size_best,
-                                  lambda: tf.constant(200.0))
-            crop_size_best.set_shape([])
-
-            # calculate necessary scaling
-            scale = tf.cast(crop_size, tf.float32) / crop_size_best
-            scale = tf.minimum(tf.maximum(scale, 1.0), 10.0)
-            scale *= crop_scale_noise
-            crop_scale = scale
-
-            if crop_offset_noise:
-                noise = tf.truncated_normal([2], mean=0.0, stddev=crop_offset_noise_sigma)
-                crop_center += noise
-
-            # Crop image
-            img_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size, scale)
-            image_crop = tf.stack([img_crop[0,:,:,0], img_crop[0,:,:,1],img_crop[0,:,:,2]],2)
-
-            # Modify uv21 coordinates
-            crop_center_float = tf.cast(crop_center, tf.float32)
-            keypoint_uv21_u = (keypoint_uv21[:, 0] - crop_center_float[1]) * scale + crop_size // 2
-            keypoint_uv21_v = (keypoint_uv21[:, 1] - crop_center_float[0]) * scale + crop_size // 2
-            keypoint_uv21 = tf.stack([keypoint_uv21_u, keypoint_uv21_v], 1)
-
-            # Modify camera intrinsics
-            scale = tf.reshape(scale, [1, ])
-            scale_matrix = tf.dynamic_stitch([[0], [1], [2],
-                                              [3], [4], [5],
-                                              [6], [7], [8]], [scale, [0.0], [0.0],
-                                                               [0.0], scale, [0.0],
-                                                               [0.0], [0.0], [1.0]])
-            scale_matrix = tf.reshape(scale_matrix, [3, 3])
-
-            crop_center_float = tf.cast(crop_center, tf.float32)
-            trans1 = crop_center_float[0] * scale - crop_size // 2
-            trans2 = crop_center_float[1] * scale - crop_size // 2
-            trans1 = tf.reshape(trans1, [1, ])
-            trans2 = tf.reshape(trans2, [1, ])
-            trans_matrix = tf.dynamic_stitch([[0], [1], [2],
-                                              [3], [4], [5],
-                                              [6], [7], [8]], [[1.0], [0.0], -trans2,
-                                                               [0.0], [1.0], -trans1,
-                                                               [0.0], [0.0], [1.0]])
-            trans_matrix = tf.reshape(trans_matrix, [3, 3])
-
-            k = tf.matmul(trans_matrix, tf.matmul(scale_matrix, k))
-
-        # 统计指尖像素数量，指导高斯分布的面积
+        # 高斯分布
+        keypoint_uv_heatmap = create_multiple_gaussian_map(keypoint_uv, image_size)
         """
         Segmentation masks available:
         左手：2,5,8,11,14
         右手：18,21,24,27,30
         """
-        return image_crop, keypoint_uv21, keypoint_xyz21_normed
+        return image, keypoint_uv, keypoint_uv_heatmap, keypoint_xyz
+    def ReadTxtName(self, rootdir):
+        lines = []
+        with open(rootdir, 'r') as file_to_read:
+            while True:
+                line = file_to_read.readline()
+                if not line:
+                    break
+                line = line.strip('\n')
+                lines.append(line)
+        return lines
 
 if __name__ == '__main__':
-    dataset_RHD = RHD()
+    dataset_GANerate = GANerate()
     with tf.Session() as sess:
 
-        for i in tqdm(range(dataset_RHD.example_num)):
-            image_crop, keypoint_uv21, keypoint_xyz21_normed = sess.run(dataset_RHD.get_batch_data)
-            RHD.visualize_data(image_crop[0], keypoint_uv21[0], keypoint_xyz21_normed[0])
+        for i in tqdm(range(dataset_GANerate.sample_num)):
+            image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed = sess.run(dataset_GANerate.get_batch_data)
+            dataset_GANerate.visualize_data(image_crop[0], keypoint_uv21[0],keypoint_uv_heatmap[0], keypoint_xyz21_normed[0])
