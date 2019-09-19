@@ -253,8 +253,10 @@ class GANerate(BaseDataset):
         self.imagefilenames = tf.constant(self.GAN_color_path)
 
 
-        # 创建正经数据集
-        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.joint2D, self.joint_pos))
+        # 创建训练数据集
+        train_num = 140000
+
+        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames[:train_num], self.joint2D[:train_num], self.joint_pos[:train_num]))
         dataset = dataset.map(GANerate._parse_function)
         dataset = dataset.repeat()
         dataset = dataset.shuffle(buffer_size=320)
@@ -262,6 +264,16 @@ class GANerate(BaseDataset):
         #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
         self.iterator = self.dataset.make_one_shot_iterator()
         self.get_batch_data = self.iterator.get_next()
+
+        # 创建测试数据集
+        dataset_eval = tf.data.Dataset.from_tensor_slices((self.imagefilenames[train_num:], self.joint2D[train_num:], self.joint_pos[train_num:]))
+        dataset_eval = dataset_eval.map(GANerate._parse_function)
+        dataset_eval = dataset_eval.repeat()
+        dataset_eval = dataset_eval.shuffle(buffer_size=320)
+        self.dataset_eval = dataset_eval.batch(batchnum)
+        #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
+        self.iterator_eval = self.dataset_eval.make_one_shot_iterator()
+        self.get_batch_data_eval = self.iterator_eval.get_next()
 
 
     @staticmethod
@@ -329,5 +341,5 @@ if __name__ == '__main__':
     with tf.Session() as sess:
 
         for i in tqdm(range(dataset_GANerate.sample_num)):
-            image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed = sess.run(dataset_GANerate.get_batch_data)
+            image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed = sess.run(dataset_GANerate.get_batch_data_eval)
             dataset_GANerate.visualize_data(image_crop[0], keypoint_uv21[0],keypoint_uv_heatmap[0], keypoint_xyz21_normed[0])
