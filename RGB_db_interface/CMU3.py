@@ -220,44 +220,38 @@ class CMU(BaseDataset):
             dat_all = json.load(fid)
             dat_all = dat_all['root']
         self.GAN_color_path = []
+        self.joint2D = np.zeros([len(dat_all),21,2])
         for dat_i in tqdm(range(len(dat_all))):
             self.GAN_color_path.append(folderPath + dat_all[dat_i]['img_paths'])
+            self.joint2D[dat_i] = np.array(dat_all[dat_i]['joint_self'])[:,:2]
 
-        self.joint2D = np.loadtxt('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache/joint2D.txt', delimiter=',')
-        self.joint_pos = np.loadtxt('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache/joint_pos.txt', delimiter=',')
-        self.GAN_color_path = self.ReadTxtName('/home/chen/Documents/Mobile_hand/RGB_db_interface/cache/GAN_color_path.txt')
         self.sample_num = len(self.GAN_color_path)
-        self.joint2D = np.reshape(self.joint2D,[-1,21,2])
-        self.joint_pos = np.reshape(self.joint_pos,[-1,21,3])
-
         self.imagefilenames = tf.constant(self.GAN_color_path)
 
-
         # 创建训练数据集
-        train_num = 140000
 
-        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames[:train_num], self.joint2D[:train_num], self.joint_pos[:train_num]))
+        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.joint2D))
         dataset = dataset.map(CMU._parse_function)
         dataset = dataset.repeat()
-        dataset = dataset.shuffle(buffer_size=320)
+        dataset = dataset.shuffle(buffer_size=32)
         self.dataset = dataset.batch(batchnum)
         #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
         self.iterator = self.dataset.make_one_shot_iterator()
         self.get_batch_data = self.iterator.get_next()
-
-        # 创建测试数据集
-        dataset_eval = tf.data.Dataset.from_tensor_slices((self.imagefilenames[train_num:], self.joint2D[train_num:], self.joint_pos[train_num:]))
-        dataset_eval = dataset_eval.map(CMU._parse_function)
-        dataset_eval = dataset_eval.repeat()
-        dataset_eval = dataset_eval.shuffle(buffer_size=320)
-        self.dataset_eval = dataset_eval.batch(batchnum)
-        #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
-        self.iterator_eval = self.dataset_eval.make_one_shot_iterator()
-        self.get_batch_data_eval = self.iterator_eval.get_next()
+        #
+        # # 创建测试数据集
+        # dataset_eval = tf.data.Dataset.from_tensor_slices((self.imagefilenames[train_num:], self.joint2D[train_num:], self.joint_pos[train_num:]))
+        # dataset_eval = dataset_eval.map(CMU._parse_function)
+        # dataset_eval = dataset_eval.repeat()
+        # dataset_eval = dataset_eval.shuffle(buffer_size=320)
+        # self.dataset_eval = dataset_eval.batch(batchnum)
+        # #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
+        # self.iterator_eval = self.dataset_eval.make_one_shot_iterator()
+        # self.get_batch_data_eval = self.iterator_eval.get_next()
 
 
     @staticmethod
-    def visualize_data(image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed):
+    def visualize_data(image_crop, keypoint_uv21, keypoint_uv_heatmap):
         # get info from annotation dictionary
 
         image_crop = (image_crop + 0.5) * 255
@@ -268,16 +262,11 @@ class CMU(BaseDataset):
         fig = plt.figure(1)
         plt.clf()
         ax1 = fig.add_subplot(221)
-        ax2 = fig.add_subplot(222, projection='3d')
+
         ax1.imshow(image_crop)
         #plot_hand(keypoint_uv21, ax1)
         ax1.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
         #ax1.scart(keypoint_uv21[:, 0], keypoint_uv21[:, 1], color=color, linewidth=1)
-        plot_hand_3d(keypoint_xyz21_normed, ax2)
-        ax2.view_init(azim=-90.0, elev=-90.0)  # aligns the 3d coord with the camera view
-        ax2.set_xlim([-2, 2])
-        ax2.set_ylim([-2, 2])
-        ax2.set_zlim([-2, 2])
 
         ax3 = fig.add_subplot(223)
         ax3.imshow(np.sum(keypoint_uv_heatmap, axis=-1))  # 第一个batch的维度 hand1(0~31) back1(32~63)
@@ -286,16 +275,91 @@ class CMU(BaseDataset):
         plt.savefig('/tmp/image/'+now+'.png')
 
     @staticmethod
-    def _parse_function(imagefilename, keypoint_uv, keypoint_xyz):
+    def _parse_function(imagefilename, keypoint_uv):
         # 数据的基本处理
-        image_size = (256, 256)
+        image_size = (1080, 1920)
         image_string = tf.read_file(imagefilename)
-        image_decoded = tf.image.decode_png(image_string)
-        image_decoded = tf.image.resize_images(image_decoded, [256, 256], method=0)
-        image_decoded.set_shape([image_size[0],image_size[0],3])
+        image_decoded = tf.image.decode_jpeg(image_string)
+        image_decoded = tf.image.resize_images(image_decoded, [1080, 1920], method=0)
+        image_decoded.set_shape([image_size[0],image_size[1],3])
         image = tf.cast(image_decoded, tf.float32)
         image = image / 255.0 - 0.5
 
+        # 图片剪切
+        crop_center = keypoint_uv21[12, ::-1]
+
+        # catch problem, when no valid kp available (happens almost never)
+        crop_center = tf.cond(tf.reduce_all(tf.is_finite(crop_center)), lambda: crop_center,
+                              lambda: tf.constant([0.0, 0.0]))
+        crop_center.set_shape([2, ])
+
+        if crop_center_noise:
+            noise = tf.truncated_normal([2], mean=0.0, stddev=crop_center_noise_sigma)
+            crop_center += noise
+
+        crop_scale_noise = tf.constant(1.0)
+        if crop_scale_noise_:
+            crop_scale_noise = tf.squeeze(tf.random_uniform([1], minval=1.0, maxval=1.2))
+
+        # select visible coords only
+        kp_coord_h = tf.boolean_mask(keypoint_uv21[:, 1], keypoint_vis21)
+        kp_coord_w = tf.boolean_mask(keypoint_uv21[:, 0], keypoint_vis21)
+        kp_coord_hw = tf.stack([kp_coord_h, kp_coord_w], 1)
+
+        # determine size of crop (measure spatial extend of hw coords first)
+        min_coord = tf.maximum(tf.reduce_min(kp_coord_hw, 0), 0.0)
+        max_coord = tf.minimum(tf.reduce_max(kp_coord_hw, 0), image_size)
+
+        # find out larger distance wrt the center of crop
+        crop_size_best = 2 * tf.maximum(max_coord - crop_center, crop_center - min_coord)
+        crop_size_best = tf.reduce_max(crop_size_best)
+        crop_size_best = tf.minimum(tf.maximum(crop_size_best, 50.0), 500.0)
+
+        # catch problem, when no valid kp available
+        crop_size_best = tf.cond(tf.reduce_all(tf.is_finite(crop_size_best)), lambda: crop_size_best,
+                                 lambda: tf.constant(200.0))
+        crop_size_best.set_shape([])
+
+        # calculate necessary scaling
+        scale = tf.cast(crop_size, tf.float32) / crop_size_best
+        scale = tf.minimum(tf.maximum(scale, 1.0), 10.0)
+        scale *= crop_scale_noise
+        crop_scale = scale
+
+        if crop_offset_noise:
+            noise = tf.truncated_normal([2], mean=0.0, stddev=crop_offset_noise_sigma)
+            crop_center += noise
+
+        # Crop image
+        img_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size, scale)
+        image_crop = tf.stack([img_crop[0, :, :, 0], img_crop[0, :, :, 1], img_crop[0, :, :, 2]], 2)
+
+        # Modify uv21 coordinates
+        crop_center_float = tf.cast(crop_center, tf.float32)
+        keypoint_uv21_u = (keypoint_uv21[:, 0] - crop_center_float[1]) * scale + crop_size // 2
+        keypoint_uv21_v = (keypoint_uv21[:, 1] - crop_center_float[0]) * scale + crop_size // 2
+        keypoint_uv21 = tf.stack([keypoint_uv21_u, keypoint_uv21_v], 1)
+
+        # Modify camera intrinsics
+        scale = tf.reshape(scale, [1, ])
+        scale_matrix = tf.dynamic_stitch([[0], [1], [2],
+                                          [3], [4], [5],
+                                          [6], [7], [8]], [scale, [0.0], [0.0],
+                                                           [0.0], scale, [0.0],
+                                                           [0.0], [0.0], [1.0]])
+        scale_matrix = tf.reshape(scale_matrix, [3, 3])
+
+        crop_center_float = tf.cast(crop_center, tf.float32)
+        trans1 = crop_center_float[0] * scale - crop_size // 2
+        trans2 = crop_center_float[1] * scale - crop_size // 2
+        trans1 = tf.reshape(trans1, [1, ])
+        trans2 = tf.reshape(trans2, [1, ])
+        trans_matrix = tf.dynamic_stitch([[0], [1], [2],
+                                          [3], [4], [5],
+                                          [6], [7], [8]], [[1.0], [0.0], -trans2,
+                                                           [0.0], [1.0], -trans1,
+                                                           [0.0], [0.0], [1.0]])
+        trans_matrix = tf.reshape(trans_matrix, [3, 3])
 
         # 高斯分布
         keypoint_uv_heatmap = create_multiple_gaussian_map(keypoint_uv, image_size)
@@ -304,7 +368,7 @@ class CMU(BaseDataset):
         左手：2,5,8,11,14
         右手：18,21,24,27,30
         """
-        return image, keypoint_uv, keypoint_uv_heatmap, keypoint_xyz
+        return image, keypoint_uv, keypoint_uv_heatmap
     def ReadTxtName(self, rootdir):
         lines = []
         with open(rootdir, 'r') as file_to_read:
@@ -318,50 +382,9 @@ class CMU(BaseDataset):
 
 if __name__ == '__main__':
 
-    plt.rcParams['figure.figsize'] = (20, 20)
-    plt.rcParams['image.interpolation'] = 'nearest'
-    plt.rcParams['image.cmap'] = 'gray'
-
-    edges = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [0, 9], [9, 10], [10, 11], [11, 12],
-             [0, 13], [13, 14], [14, 15], [15, 16], [0, 17], [17, 18], [18, 19], [19, 20]]
-
-    outpath = '/home/chen/Documents/Mobile_hand/RGB_db_interface/output_viz/'
-    if not os.path.isdir(outpath):
-        os.makedirs(outpath)
-
-    # Input data paths
-    folderPath = '/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/CMU3_hand143_panopticdb/'  # Put your local path here
-    jsonPath = folderPath + 'hands_v143_14817.json'
-
-    with open(jsonPath, 'r') as fid:
-        dat_all = json.load(fid)
-        dat_all = dat_all['root']
-
-    dat = dat_all[0]  # Choose one element as an example;
-    pts = np.array(dat['joint_self'])
-    invalid = pts[:, 2] != 1
-
-    imgPath = folderPath + dat['img_paths']
-    # Plot annotations
-    plt.clf()
-    im = plt.imread(imgPath)
-    plt.imshow(im)
-
-    for p in range(pts.shape[0]):
-        if pts[p, 2] != 0:
-            plt.plot(pts[p, 0], pts[p, 1], 'r.')
-            plt.text(pts[p, 0], pts[p, 1], '{0}'.format(p))
-    for ie, e in enumerate(edges):
-        if np.all(pts[e, 2] != 0):
-            rgb = matplotlib.colors.hsv_to_rgb([ie / float(len(edges)), 1.0, 1.0])
-            plt.plot(pts[e, 0], pts[e, 1], color=rgb)
-    plt.axis('off')
-    plt.savefig(outpath + dat['img_paths'][5:-5] + '.jpg', bbox_inches='tight')
-
-
     dataset_CMU = CMU()
-    # with tf.Session() as sess:
-    #
-    #     for i in tqdm(range(dataset_CMU.sample_num)):
-    #         image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed = sess.run(dataset_CMU.get_batch_data_eval)
-    #         dataset_CMU.visualize_data(image_crop[0], keypoint_uv21[0],keypoint_uv_heatmap[0], keypoint_xyz21_normed[0])
+    with tf.Session() as sess:
+
+        for i in tqdm(range(dataset_CMU.sample_num)):
+            image_crop, keypoint_uv21, keypoint_uv_heatmap = sess.run(dataset_CMU.get_batch_data)
+            dataset_CMU.visualize_data(image_crop[0], keypoint_uv21[0],keypoint_uv_heatmap[0])
