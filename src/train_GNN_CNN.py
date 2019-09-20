@@ -117,7 +117,7 @@ for epoch in range(1, int(140000/32/1000)*100 + 1):
     for one_epoch in tqdm(range(100)):
         loss_eval_v += sess.run(loss_eval)
     loss_eval_v = loss_eval_v/100
-    log_line(train_para['snapshot_dir'] + '/eval'+now+'.log', " Train: loss: %.5f" % loss_eval_v)
+    log_line(train_para['snapshot_dir'] + '/eval'+now+'.log', " Eval: loss: %.5f" % loss_eval_v)
 
     if early_stopping_metric > loss_eval_v:
         early_stopping_metric = loss_eval_v

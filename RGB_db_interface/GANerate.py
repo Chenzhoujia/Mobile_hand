@@ -16,7 +16,14 @@ import tensorflow as tf
 import time
 
 def plot_hand(coords_hw, axis, color_fixed=None, linewidth='1'):
-    """ Plots a hand stick figure into a matplotlib figure. """
+    """ Plots a hand stick figure into a matplotlib figure.
+    W,
+    T0, T1, T2, T3,
+    I0, I1, I2, I3,
+     M0, M1, M2, M3,
+     R0, R1, R2, R3,
+     L0, L1, L2, L3.
+    """
     colors = np.array([[0., 0., 0.5],
                        [0., 0., 0.73172906],
                        [0., 0., 0.96345811],
@@ -39,27 +46,27 @@ def plot_hand(coords_hw, axis, color_fixed=None, linewidth='1'):
                        [0.5, 0., 0.]])
 
     # define connections and colors of the bones
-    bones = [((0, 4), colors[0, :]),
+    bones = [((0, 1), colors[0, :]),
              ((4, 3), colors[1, :]),
              ((3, 2), colors[2, :]),
              ((2, 1), colors[3, :]),
 
-             ((0, 8), colors[4, :]),
+             ((0, 5), colors[4, :]),
              ((8, 7), colors[5, :]),
              ((7, 6), colors[6, :]),
              ((6, 5), colors[7, :]),
 
-             ((0, 12), colors[8, :]),
+             ((0, 9), colors[8, :]),
              ((12, 11), colors[9, :]),
              ((11, 10), colors[10, :]),
              ((10, 9), colors[11, :]),
 
-             ((0, 16), colors[12, :]),
+             ((0, 13), colors[12, :]),
              ((16, 15), colors[13, :]),
              ((15, 14), colors[14, :]),
              ((14, 13), colors[15, :]),
 
-             ((0, 20), colors[16, :]),
+             ((0, 17), colors[16, :]),
              ((20, 19), colors[17, :]),
              ((19, 18), colors[18, :]),
              ((18, 17), colors[19, :])]
@@ -98,27 +105,27 @@ def plot_hand_3d(coords_xyz, axis, color_fixed=None, linewidth='1'):
                        [0.5, 0., 0.]])
 
     # define connections and colors of the bones
-    bones = [((0, 4), colors[0, :]),
+    bones = [((0, 1), colors[0, :]),
              ((4, 3), colors[1, :]),
              ((3, 2), colors[2, :]),
              ((2, 1), colors[3, :]),
 
-             ((0, 8), colors[4, :]),
+             ((0, 5), colors[4, :]),
              ((8, 7), colors[5, :]),
              ((7, 6), colors[6, :]),
              ((6, 5), colors[7, :]),
 
-             ((0, 12), colors[8, :]),
+             ((0, 9), colors[8, :]),
              ((12, 11), colors[9, :]),
              ((11, 10), colors[10, :]),
              ((10, 9), colors[11, :]),
 
-             ((0, 16), colors[12, :]),
+             ((0, 13), colors[12, :]),
              ((16, 15), colors[13, :]),
              ((15, 14), colors[14, :]),
              ((14, 13), colors[15, :]),
 
-             ((0, 20), colors[16, :]),
+             ((0, 17), colors[16, :]),
              ((20, 19), colors[17, :]),
              ((19, 18), colors[18, :]),
              ((18, 17), colors[19, :])]

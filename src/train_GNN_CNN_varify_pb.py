@@ -1,11 +1,13 @@
 import tensorflow as tf
 import argparse
 import cv2
+import numpy as np
+from numpy import unravel_index
 from tqdm import tqdm
 import scipy.misc
 import numpy as np
 import matplotlib.pyplot as plt
-
+from RGB_db_interface.GANerate import plot_hand
 
 def load_graph(frozen_graph_filename):
     # 加载protobug文件，并反序列化成graph_def
@@ -36,63 +38,56 @@ if __name__ == '__main__':
     for op in graph.get_operations():
         print(op.name)
 
-    x = graph.get_tensor_by_name('prefix/GPU_0/input_image:0')
-    y = graph.get_tensor_by_name('prefix/GPU_0/final_pred_heatmaps_tmp:0')
-    cap = cv2.VideoCapture(0)
-    centerx = 160
-    centery = 120
-    size = 24
-    color_ = (0, 255, 0)
+    x = graph.get_tensor_by_name('prefix/input_node_representations:0')
+    y = graph.get_tensor_by_name('prefix/final_output_node_representations:0')
 
     # We launch a Session
+    import os
+    import shutil
+    shutil.rmtree('./snapshots_posenet/baseline/real_eval/')  # 能删除该文件夹和文件夹下所有文件
+    os.mkdir('./snapshots_posenet/baseline/real_eval/')
+    cap = cv2.VideoCapture(0)
     with tf.Session(graph=graph) as sess:
-        for step in range(128):
-            image_raw12_crop = np.loadtxt('/home/chen/Documents/tensorflow-for-poets-2-end_of_first_codelab/android/tflite/app/src/main/res/raw/test_real_image.txt', delimiter=',')
-            image_raw12_crop = image_raw12_crop[step, :]
-            image_raw12_crop = np.reshape(image_raw12_crop, [32, 32, 3])
-            tmp = image_raw12_crop[0, 1, :]
-            preheat_v = sess.run(y, feed_dict={x: image_raw12_crop[np.newaxis, :]})
-            preheat_v_tmp = preheat_v[0,:,:,0]
-            # 根据preheat_v 计算最有可能的指尖坐标，当手指指尖存在时更新坐标centerx， centery
-            if True:  # pre_is_loss_v[0, 0] > pre_is_loss_v[0, 1]:
-                sum_preheat_v = np.sum(np.sum(np.sum(preheat_v, axis=0), axis=0), axis=0)
-                print(sum_preheat_v)
-                color_ = (0, 255, 0)
-                motion = preheat_v[0, :, :, 0] - preheat_v[0, :, :, 1]
-                raw, column = motion.shape
-                _positon = np.argmax(motion)  # get the index of max in the a
-                m, n = divmod(_positon, column)
-            else:
-                color_ = (255, 0, 0)
-                m = 15.5
-                n = 15.5
 
-            right_move = int((n - 15.5) / 32 * 48)
-            down_move = int((m - 15.5) / 32 * 48)
-            centery = centery + down_move
-            centerx = centerx + right_move
-            input_image_v = (image_raw12_crop + 0.5) * 255
-            input_image_v = input_image_v.astype(np.int16)
+        for step in tqdm(range(1,1024)):
+            """
+            使用cv2.imread()接口读图像，读进来的是BGR格式以及【0～255】。所以只要将img转换为RGB格式显示即可：
 
-            if centery < 0 or centery > 240:
-                centery = 120
+            """
+            #frame = cv2.imread('/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/GANeratedHands_Release/data/noObject/0001/'
+            #                   + str(step).zfill(4) + '_color_composed.png')
+            #frame = cv2.imread('/home/chen/Documents/Mobile_hand/src/snapshots_posenet/baseline/real/' + str(step) + '.jpg')
+            frame = cv2.imread('/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/ICCV2017/RHD_published_v2/evaluation/color/' + str(step) + '.jpg')
 
-            if centerx < 0 or centerx > 320:
-                centerx = 160
+            # ret, frame = cap.read()
+            # frame = frame[240 - 128:240 + 128, 320 - 128:320 + 128, :]
 
+            frame = frame[:,:, [2, 1, 0]]
+            frame = frame.astype(np.float)
+            frame = frame / 255.0 - 0.5
+
+            heatmap = sess.run(y, feed_dict={x: frame[np.newaxis, :]})
+
+            keypoint_uv21_pre =  np.zeros([1,21,2])
+            for i in range(heatmap.shape[0]):
+                for j in range(heatmap.shape[-1]):
+                    heatmap_pre_tmp = heatmap[i,:,:,j]
+                    cor_tmp = unravel_index(heatmap_pre_tmp.argmax(), heatmap_pre_tmp.shape)
+                    keypoint_uv21_pre[i,j,0] = cor_tmp[1]
+                    keypoint_uv21_pre[i,j,1] = cor_tmp[0]
+
+
+
+            frame = (frame + 0.5) * 255
+            frame = frame.astype(np.int16)
             fig = plt.figure(1)
             plt.clf()
-            ax1 = fig.add_subplot(2, 2, 2)
-            ax1.imshow(input_image_v)  # 第一个batch的维度 hand1(0~31) back1(32~63)
+            ax1 = fig.add_subplot(121)
+            ax1.imshow(frame)
+            plot_hand(keypoint_uv21_pre[0], ax1)
 
-            ax3 = fig.add_subplot(2, 2, 3)
-            ax3.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-
-            ax7 = fig.add_subplot(2, 2, 4)
-            ax7.imshow(preheat_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-
-
-            plt.savefig(
-                "/home/chen/Documents/Mobile_hand/experiments/varify/image/valid_on_cam/softmax/" + str(step).zfill(
-                    10) + "_.png")
+            ax2 = fig.add_subplot(122)
+            ax2.imshow(np.sum(heatmap[0], axis=-1))  # 第一个batch的维度 hand1(0~31) back1(32~63)
+            ax2.scatter(keypoint_uv21_pre[0, :, 0], keypoint_uv21_pre[0, :, 1], s=10, c='k', marker='.')
             plt.pause(0.01)
+            #plt.savefig('./snapshots_posenet/baseline/real_eval/' + str(step).zfill(5) + '.png')

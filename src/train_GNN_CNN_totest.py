@@ -1,224 +1,136 @@
 # -*- coding: utf-8 -*-
-import datetime
 import tensorflow as tf
 import os
-import platform
+import sys
 import time
 import numpy as np
-import configparser
+from numpy import unravel_index
 
+from nets.ColorHandPose3DNetwork import ColorHandPose3DNetwork
 from tqdm import tqdm
-
-from dataset_interface.RHD import RHD
-from dataset_interface.dataset_prepare import CocoPose
-from src.networks import get_network
+from utils.general import LearningRateScheduler, load_weights_from_snapshot
 import matplotlib.pyplot as plt
-from src.general import NetworkOps
-from src import  network_mv2_hourglass
 from mpl_toolkits.mplot3d import Axes3D
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
-ops = NetworkOps
-test_num = 1
-def upsample(inputs, factor, name):
-    return tf.image.resize_bilinear(inputs, [int(inputs.get_shape()[1]) * factor, int(inputs.get_shape()[2]) * factor],
-                                    name=name)
-def get_loss_and_output(model, batchsize, input_image, scoremap, is_loss, reuse_variables=None):
-    losses = []
-
-    # 叠加在batch上重用特征提取网络
-    input_image = tf.add(input_image, 0, name='input_image')
-    with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
-        network_mv2_hourglass.N_KPOINTS = 2
-        _, pred_heatmaps_all = get_network(model, input_image, True) #第一个batch的维度 hand back
-
-    loss_scoremap = 0.0
-    loss_is_loss = 0.0
-    for loss_i in range(len(pred_heatmaps_all)):
-        # 计算 isloss，用softmax计算 0~1}
-        is_loss_s = pred_heatmaps_all[loss_i].get_shape().as_list()
-        pre_is_loss = tf.reshape(pred_heatmaps_all[loss_i], [-1, is_loss_s[1]*is_loss_s[2]*is_loss_s[3]])  # this is Bx16*16*1
-        out_chan_list = [32, 16, 8, 2]
-        for i, out_chan in enumerate(out_chan_list):
-            pre_is_loss = ops.fully_connected_relu(pre_is_loss, 'is_loss_fc_%d_%d' % (loss_i, i), out_chan=out_chan, trainable=True)#(128,1)
-
-        # 计算热度图
-        scale = 2
-        pred_heatmaps_tmp = upsample(pred_heatmaps_all[loss_i], scale, name="upsample_for_hotmap_loss_%d" % loss_i)
-
-
-        #用is loss 修正热度图
-        pre_is_loss = tf.nn.softmax(pre_is_loss)
-        pred_heatmaps_tmp_01_modi = tf.expand_dims(tf.expand_dims(pre_is_loss, axis=1), axis=1)*pred_heatmaps_tmp
-        pred_heatmaps_tmp = tf.nn.softmax(pred_heatmaps_tmp)
-        pred_heatmaps_tmp_01_modi = tf.nn.softmax(pred_heatmaps_tmp_01_modi)
-
-    total_loss = loss_scoremap + loss_is_loss
-    return pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_01_modi
-
-def average_gradients(tower_grads):
-    """
-    Get gradients of all variables.
-    :param tower_grads:
-    :return:
-    """
-    average_grads = []
-
-    # get variable and gradients in differents gpus
-    for grad_and_vars in zip(*tower_grads):
-        # calculate the average gradient of each gpu
-        grads = []
-        for g, _ in grad_and_vars:
-            expanded_g = tf.expand_dims(g, 0)
-            grads.append(expanded_g)
-        grad = tf.concat(grads, 0)
-        grad = tf.reduce_mean(grad, 0)
-
-        v = grad_and_vars[0][1]
-        grad_and_var = (grad, v)
-        average_grads.append(grad_and_var)
-    return average_grads
+from RGB_db_interface.GANerate import GANerate, plot_hand
+from dataset_interface.RHD import RHD
+def stats_graph(graph):
+    flops = tf.profiler.profile(graph, options=tf.profiler.ProfileOptionBuilder.float_operation())
+    params = tf.profiler.profile(graph, options=tf.profiler.ProfileOptionBuilder.trainable_variables_parameter())
+    print('FLOPs: {};    Trainable params: {}'.format(flops.total_float_ops, params.total_parameters))
 
 def main(argv=None):
-    # load config file and setup
-    params = {}
-    config = configparser.ConfigParser()
-    config_file = "../experiments/mv2_cpm.cfg"
-    if len(argv) != 1:
-        config_file = argv[1]
-    config.read(config_file)
-    for _ in config.options("Train"):
-        params[_] = eval(config.get("Train", _))
+    train_para = {'lr': [1e-4, 1e-5, 1e-6],
+                  'lr_iter': [10000, 20000],
+                  'max_iter': 30000,
+                  'show_loss_freq': 1000,
+                  'snapshot_freq': 5000,
+                  'snapshot_dir': 'snapshots_posenet'}
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = params['visible_devices']
+    # Start TF
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95)
+    sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+    tf.train.start_queue_runners(sess=sess)
 
-    gpus_index = params['visible_devices'].split(",")
-    params['gpus'] = len(gpus_index)
+    # get dataset
+    dataset_GANerate = GANerate(batchnum=32)
+    image_crop_eval, keypoint_uv21_eval, keypoint_uv_heatmap_eval, keypoint_xyz21_normed_eval = dataset_GANerate.get_batch_data_eval
 
-    if not os.path.exists(params['modelpath']):
-        os.makedirs(params['modelpath'])
-    if not os.path.exists(params['logpath']):
-        os.makedirs(params['logpath'])
+    # build network
+    evaluation = tf.placeholder_with_default(True, shape=())
+    net = ColorHandPose3DNetwork()
 
-    gpus = 'gpus'
-    if platform.system() == 'Darwin':
-        gpus = 'cpu'
-    training_name = '{}_batch-{}_lr-{}_{}-{}_{}x{}_{}'.format(
-        params['model'],
-        params['batchsize'],
-        params['lr'],
-        gpus,
-        params['gpus'],
-        params['input_width'], params['input_height'],
-        config_file.replace("/", "-").replace(".cfg", "")
-    )
+    image_crop_eval = tf.add(image_crop_eval, 0,
+                                     name='input_node_representations')
+    keypoints_scoremap_eval = net.inference_pose2d(image_crop_eval, train=True)
+    s = keypoint_uv_heatmap_eval.get_shape().as_list()
+    keypoints_scoremap_eval = [tf.image.resize_images(x, (s[1], s[2])) for x in keypoints_scoremap_eval]
 
-    with tf.Graph().as_default(), tf.device("/cpu:0"):
-        dataset_RHD = RHD(batchnum=test_num)
+    # Loss
+    loss_eval = 0.0
+    for i, pred_item in enumerate(keypoints_scoremap_eval):
+        loss_eval += tf.reduce_sum(tf.sqrt(tf.reduce_mean(tf.square(pred_item - keypoint_uv_heatmap_eval), [1, 2])))
+    keypoints_scoremap_eval = keypoints_scoremap_eval[-1]
+    keypoints_scoremap_eval = tf.add(keypoints_scoremap_eval, 0,
+                                     name='final_output_node_representations')
+    init = tf.global_variables_initializer()
+    config = tf.ConfigProto()
+    # occupy gpu gracefully
+    config.gpu_options.allow_growth = True
+    with tf.Session(config=config) as sess:
+        init.run()
+        checkpoint_path = './snapshots_posenet'
+        model_name = 'model-30000'
+        if checkpoint_path:
+            saver = tf.train.Saver(max_to_keep=10)
+            saver.restore(sess, checkpoint_path+'/'+model_name)
+            print("restore from " + checkpoint_path+'/'+model_name)
+        create_pb = True
+        if create_pb:
+            input_graph_def = sess.graph.as_graph_def()
+            variable_names = [v.name for v in input_graph_def.node]
+            print('==================Model Analysis Report variable_names======================')
+            print(variable_names)
+            print('==================Model Analysis Report operations======================')
+            for op in sess.graph.get_operations():
+                print(str(op.name))
+            stats_graph(sess.graph)
+            output_graph_def = tf.graph_util.convert_variables_to_constants(
+                sess,  # The session
+                input_graph_def,  # input_graph_def is useful for retrieving the nodes
+                'final_output_node_representations'.split(",")
+            )
 
-        global_step = tf.Variable(0, trainable=False)
+            with tf.gfile.FastGFile(checkpoint_path+'/'+model_name+ ".pb", "wb") as f:
+                f.write(output_graph_def.SerializeToString())
 
-        reuse_variable = False
+        print("Start testing...")
+        path = './snapshots_posenet/baseline'
+        import matplotlib.image
+        loss_eval_v = 0.0
+        loss_piex_save = 0.0
+        for one_epoch in tqdm(range(100)):
+            image, heatmap, heatmap_pre, keypoint_uv21, loss_eval_v = sess.run([image_crop_eval, keypoint_uv_heatmap_eval, keypoints_scoremap_eval,
+                                                                  keypoint_uv21_eval, loss_eval])
+            image = (image + 0.5) * 255
+            image = image.astype(np.int16)
 
-        for i in range(params['gpus']):
-            with tf.device("/gpu:%d" % i):
-                with tf.name_scope("GPU_%d" % i):
-                    input_node = tf.placeholder(tf.float32, shape=[test_num, 32, 32, 3], name="input_image")
+            #根据热度图计算最大的下标
+            keypoint_uv21_pre = np.zeros_like(keypoint_uv21)
+            for i in range(heatmap_pre.shape[0]):
+                for j in range(heatmap_pre.shape[-1]):
+                    heatmap_pre_tmp = heatmap_pre[i,:,:,j]
+                    cor_tmp = unravel_index(heatmap_pre_tmp.argmax(), heatmap_pre_tmp.shape)
+                    keypoint_uv21_pre[i,j,0] = cor_tmp[1]
+                    keypoint_uv21_pre[i,j,1] = cor_tmp[0]
 
-                    batch_data_all = dataset_RHD.get_batch_data
-                    input_image1 = batch_data_all[8]
-                    input_image2 = batch_data_all[10]
-                    hand_motion = batch_data_all[9]
-                    scoremap1 = batch_data_all[11]
-                    scoremap2 = batch_data_all[12]
-                    is_loss1 = batch_data_all[13]
-                    is_loss2 = batch_data_all[14]
+            loss_piex = keypoint_uv21_pre - keypoint_uv21
+            loss_piex = np.sqrt(np.square(loss_piex[:,:,0]) + np.square(loss_piex[:,:,1]))
+            loss_piex_save = loss_piex_save + np.mean(loss_piex)
 
-                    # input_image = tf.concat([input_image1, input_image1_back], 0) #第一个batch的维度 hand1 back1
-                    # scoremap = tf.concat([scoremap1, scoremap1_back], 0)
-                    # is_loss = tf.concat([is_loss1, is_loss1_back], 0)
+            # visualize
+            fig = plt.figure(1)
+            plt.clf()
+            ax1 = fig.add_subplot(221)
+            ax1.imshow(image[0])
+            plot_hand(keypoint_uv21[0], ax1)
 
-                    input_image = input_node
-                    scoremap = scoremap1
-                    is_loss = is_loss1
+            ax3 = fig.add_subplot(223)
+            ax3.imshow(image[0])
+            ax3.set_title(str(loss_piex[0,:].astype(np.int32)), fontsize=5)
+            plot_hand(keypoint_uv21_pre[0], ax3)
+            plot_hand(keypoint_uv21[0], ax3)
 
+            ax2 = fig.add_subplot(222)
+            ax4 = fig.add_subplot(224)
+            ax2.imshow(np.sum(heatmap[0], axis=-1))  # 第一个batch的维度 hand1(0~31) back1(32~63)
+            ax2.scatter(keypoint_uv21[0, :, 0], keypoint_uv21[0, :, 1], s=10, c='k', marker='.')
+            ax4.imshow(np.sum(heatmap_pre[0], axis=-1))  # 第一个batch的维度 hand1(0~31) back1(32~63)
+            ax4.scatter(keypoint_uv21_pre[0, :, 0], keypoint_uv21_pre[0, :, 1], s=10, c='k', marker='.')
 
-                    # 计算一个scoremap的loss
-                    scoremap = tf.reduce_sum(scoremap, axis=-1)
-                    one_scoremap = tf.ones_like(scoremap)
-                    scoremap = tf.where(scoremap > 1, x=one_scoremap, y=scoremap)
-                    scoremap = tf.expand_dims(scoremap, axis=-1)  # hand back
-                    is_loss = tf.expand_dims(is_loss, axis=-1)
-
-                    """
-                    model, batchsize, input_image, scoremap, is_loss, reuse_variables=None
-                    total_loss, loss_is_loss, loss_scoremap, pred_heatmaps_tmp, pre_is_loss, pred_heatmaps_tmp_01_modi
-                    """
-                    preheat, pre_is_loss, pred_heatmaps_tmp_01_modi\
-                        = get_loss_and_output(params['model'], params['batchsize'],
-                                                input_image, scoremap, is_loss, reuse_variable)
-
-
-        saver = tf.train.Saver(max_to_keep=10)
-
-
-        init = tf.global_variables_initializer()
-        config = tf.ConfigProto()
-        # occupy gpu gracefully
-        config.gpu_options.allow_growth = True
-        with tf.Session(config=config) as sess:
-            init.run()
-            checkpoint_path = os.path.join(params['modelpath'], training_name)
-            model_name = 'model-15350'
-            if checkpoint_path:
-                saver.restore(sess, checkpoint_path+'/'+model_name)
-                print("restore from " + checkpoint_path+'/'+model_name)
-            total_step_num = params['num_train_samples'] * params['max_epoch'] // (params['batchsize']* 2 * params['gpus'])
-
-            print("Start testing...")
-            path = "/home/chen/Documents/Mobile_hand/experiments/varify/image/set1/"
-            import matplotlib.image
-            for step in tqdm(range(286)):
-                image_raw12_crop = matplotlib.image.imread(path + str(int(step/2)).zfill(5)+'_'+str(step%2+1)+'.jpg')
-                image_raw12_crop = image_raw12_crop.astype('float') / 255.0 - 0.5
-                scoremap_v, is_loss_v,\
-                preheat_v, pre_is_loss_v, pred_heatmaps_tmp_01_modi_v\
-                    = sess.run(
-                    [scoremap, is_loss,
-                     preheat, pre_is_loss, pred_heatmaps_tmp_01_modi],
-                    feed_dict={input_node: np.repeat(image_raw12_crop[np.newaxis, :],test_num,axis=0)})
-
-                input_image_v = (image_raw12_crop + 0.5) * 255
-                input_image_v = input_image_v.astype(np.int16)
-
-                fig = plt.figure(1)
-                plt.clf()
-                ax1 = fig.add_subplot(2, 3, 1)
-                ax1.imshow(input_image_v)  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax1.axis('off')
-
-                ax3 = fig.add_subplot(2, 3, 2)
-                ax3.imshow(preheat_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax3.axis('off')
-                ax3.set_title(str(pre_is_loss_v[0, 0]))  # hand1 back1
-
-                ax7 = fig.add_subplot(2, 3, 5)
-                ax7.imshow(preheat_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax7.axis('off')
-                ax7.set_title(str(pre_is_loss_v[0, 1]))  # hand1 back1
-
-                ax4 = fig.add_subplot(2, 3, 3)
-                ax4.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax4.axis('off')
-                ax8 = fig.add_subplot(2, 3, 6)
-                ax8.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax8.axis('off')
-
-                ax2 = fig.add_subplot(2, 3, 4)
-                ax2.imshow(pred_heatmaps_tmp_01_modi_v[0, :, :, 0] - pred_heatmaps_tmp_01_modi_v[0, :, :, 1])  # 第一个batch的维度 hand1(0~31) back1(32~63)
-                ax2.axis('off')
-
-                plt.savefig("/home/chen/Documents/Mobile_hand/experiments/varify/image/valid_on_cam/softmax/"+ str(step).zfill(10) + model_name+"_.png")
-
+            plt.savefig(path+'/image/' + str(one_epoch).zfill(5) + '.png')
+        loss_eval_v = loss_eval_v / 100
+        loss_piex_save = loss_piex_save/100
+        print(loss_piex_save) #4.472415127649567
 
 if __name__ == '__main__':
     tf.app.run()
