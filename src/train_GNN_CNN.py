@@ -46,6 +46,7 @@ train_para = {'lr': [1e-4, 1e-5, 1e-6],
               'snapshot_freq': 5000,
               'snapshot_dir': 'snapshots_posenet'}
 
+
 # Start TF
 gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95)
 sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
