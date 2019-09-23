@@ -4,6 +4,7 @@ import pickle
 import os
 
 import numpy as np
+import shutil
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -229,8 +230,8 @@ class CMU(BaseDataset):
         self.imagefilenames = tf.constant(self.GAN_color_path)
 
         # 创建训练数据集
-
-        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.joint2D))
+        train_num = 13000
+        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames[:train_num], self.joint2D[:train_num]))
         dataset = dataset.map(CMU._parse_function)
         dataset = dataset.repeat()
         dataset = dataset.shuffle(buffer_size=32)
@@ -239,15 +240,15 @@ class CMU(BaseDataset):
         self.iterator = self.dataset.make_one_shot_iterator()
         self.get_batch_data = self.iterator.get_next()
         #
-        # # 创建测试数据集
-        # dataset_eval = tf.data.Dataset.from_tensor_slices((self.imagefilenames[train_num:], self.joint2D[train_num:], self.joint_pos[train_num:]))
-        # dataset_eval = dataset_eval.map(CMU._parse_function)
-        # dataset_eval = dataset_eval.repeat()
-        # dataset_eval = dataset_eval.shuffle(buffer_size=320)
-        # self.dataset_eval = dataset_eval.batch(batchnum)
-        # #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
-        # self.iterator_eval = self.dataset_eval.make_one_shot_iterator()
-        # self.get_batch_data_eval = self.iterator_eval.get_next()
+        # 创建测试数据集
+        dataset_eval = tf.data.Dataset.from_tensor_slices((self.imagefilenames[train_num:], self.joint2D[train_num:]))
+        dataset_eval = dataset_eval.map(CMU._parse_function)
+        dataset_eval = dataset_eval.repeat()
+        dataset_eval = dataset_eval.shuffle(buffer_size=32)
+        self.dataset_eval = dataset_eval.batch(batchnum)
+        #self.iterator = self.dataset.make_initializable_iterator() sess.run(dataset_RHD.iterator.initializer)
+        self.iterator_eval = self.dataset_eval.make_one_shot_iterator()
+        self.get_batch_data_eval = self.iterator_eval.get_next()
 
 
     @staticmethod
@@ -257,20 +258,21 @@ class CMU(BaseDataset):
         image_crop = (image_crop + 0.5) * 255
         image_crop = image_crop.astype(np.int16)
 
-
         # visualize
         fig = plt.figure(1)
         plt.clf()
-        ax1 = fig.add_subplot(221)
+        ax1 = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122)
 
         ax1.imshow(image_crop)
-        #plot_hand(keypoint_uv21, ax1)
-        ax1.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
-        #ax1.scart(keypoint_uv21[:, 0], keypoint_uv21[:, 1], color=color, linewidth=1)
+        #ax1.set_title(str(tex),fontsize=10)
 
-        ax3 = fig.add_subplot(223)
-        ax3.imshow(np.sum(keypoint_uv_heatmap, axis=-1))  # 第一个batch的维度 hand1(0~31) back1(32~63)
-        ax3.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
+        plot_hand(keypoint_uv21, ax1)
+        #plot_hand(keypoint_uv21, ax1)
+        #ax1.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
+
+        ax2.imshow(np.sum(keypoint_uv_heatmap, axis=-1))  # 第一个batch的维度 hand1(0~31) back1(32~63)
+        ax2.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
         now = time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime(time.time()))
         plt.savefig('/tmp/image/'+now+'.png')
 
@@ -286,89 +288,68 @@ class CMU(BaseDataset):
         image = image / 255.0 - 0.5
 
         # 图片剪切
-        crop_center = keypoint_uv21[12, ::-1]
+        img_crop = True
+        crop_center_noise = True
+        crop_scale_noise_ = True
+        crop_offset_noise_sigma = 5.0
+        crop_size = 256.0
+        keypoint_uv = tf.cast(keypoint_uv,dtype=tf.float32)
+        if img_crop:
+            crop_center = tf.reduce_mean(keypoint_uv, 0)
+            # catch problem, when no valid kp available (happens almost never)
+            crop_center = tf.cond(tf.reduce_all(tf.is_finite(crop_center)), lambda: crop_center,
+                     lambda: tf.constant([1080/2, 1920/2],dtype=tf.float32))
+            crop_center.set_shape([2, ])
+            crop_center = tf.stack([crop_center[1], crop_center[0]])
 
-        # catch problem, when no valid kp available (happens almost never)
-        crop_center = tf.cond(tf.reduce_all(tf.is_finite(crop_center)), lambda: crop_center,
-                              lambda: tf.constant([0.0, 0.0]))
-        crop_center.set_shape([2, ])
+            if crop_center_noise:
+                noise = tf.truncated_normal([2], mean=0.0, stddev=crop_offset_noise_sigma)#X落在（μ-3σ，μ+3σ）以外的概率小于千分之三
+                crop_center += noise
 
-        if crop_center_noise:
-            noise = tf.truncated_normal([2], mean=0.0, stddev=crop_center_noise_sigma)
-            crop_center += noise
+            # determine size of crop (measure spatial extend of hw coords first)
+            min_coord = tf.maximum(tf.reduce_min(keypoint_uv, 0), (0.0,0.0))
+            min_coord = tf.stack([min_coord[1], min_coord[0]])
+            max_coord = tf.minimum(tf.reduce_max(keypoint_uv, 0), image_size)
+            max_coord = tf.stack([max_coord[1], max_coord[0]])
 
-        crop_scale_noise = tf.constant(1.0)
-        if crop_scale_noise_:
-            crop_scale_noise = tf.squeeze(tf.random_uniform([1], minval=1.0, maxval=1.2))
+            # find out larger distance wrt the center of crop
+            crop_size_best = 2*tf.maximum(max_coord - crop_center, crop_center - min_coord)
+            crop_size_best = tf.reduce_max(crop_size_best)
+            crop_size_best = tf.minimum(tf.maximum(crop_size_best, 40.0), 500.0)
 
-        # select visible coords only
-        kp_coord_h = tf.boolean_mask(keypoint_uv21[:, 1], keypoint_vis21)
-        kp_coord_w = tf.boolean_mask(keypoint_uv21[:, 0], keypoint_vis21)
-        kp_coord_hw = tf.stack([kp_coord_h, kp_coord_w], 1)
+            # catch problem, when no valid kp available
+            crop_size_best = tf.cond(tf.reduce_all(tf.is_finite(crop_size_best)), lambda: crop_size_best,
+                                  lambda: tf.constant(crop_size))
+            crop_size_best.set_shape([])
 
-        # determine size of crop (measure spatial extend of hw coords first)
-        min_coord = tf.maximum(tf.reduce_min(kp_coord_hw, 0), 0.0)
-        max_coord = tf.minimum(tf.reduce_max(kp_coord_hw, 0), image_size)
+            if crop_scale_noise_:
+                crop_scale_noise = tf.squeeze(tf.random_uniform([1], minval=1.0, maxval=1.2))
+            crop_size_best = crop_size_best*crop_scale_noise
 
-        # find out larger distance wrt the center of crop
-        crop_size_best = 2 * tf.maximum(max_coord - crop_center, crop_center - min_coord)
-        crop_size_best = tf.reduce_max(crop_size_best)
-        crop_size_best = tf.minimum(tf.maximum(crop_size_best, 50.0), 500.0)
+            # calculate necessary scaling
+            scale = tf.cast(crop_size, tf.float32) / crop_size_best
+            #scale = tf.minimum(tf.maximum(scale, 1.0), 10.0)
 
-        # catch problem, when no valid kp available
-        crop_size_best = tf.cond(tf.reduce_all(tf.is_finite(crop_size_best)), lambda: crop_size_best,
-                                 lambda: tf.constant(200.0))
-        crop_size_best.set_shape([])
+        #     # Crop image
+            image_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size, scale)
+            image_crop = tf.stack([image_crop[0,:,:,0], image_crop[0,:,:,1],image_crop[0,:,:,2]],2)
 
-        # calculate necessary scaling
-        scale = tf.cast(crop_size, tf.float32) / crop_size_best
-        scale = tf.minimum(tf.maximum(scale, 1.0), 10.0)
-        scale *= crop_scale_noise
-        crop_scale = scale
-
-        if crop_offset_noise:
-            noise = tf.truncated_normal([2], mean=0.0, stddev=crop_offset_noise_sigma)
-            crop_center += noise
-
-        # Crop image
-        img_crop = crop_image_from_xy(tf.expand_dims(image, 0), crop_center, crop_size, scale)
-        image_crop = tf.stack([img_crop[0, :, :, 0], img_crop[0, :, :, 1], img_crop[0, :, :, 2]], 2)
-
-        # Modify uv21 coordinates
-        crop_center_float = tf.cast(crop_center, tf.float32)
-        keypoint_uv21_u = (keypoint_uv21[:, 0] - crop_center_float[1]) * scale + crop_size // 2
-        keypoint_uv21_v = (keypoint_uv21[:, 1] - crop_center_float[0]) * scale + crop_size // 2
-        keypoint_uv21 = tf.stack([keypoint_uv21_u, keypoint_uv21_v], 1)
-
-        # Modify camera intrinsics
-        scale = tf.reshape(scale, [1, ])
-        scale_matrix = tf.dynamic_stitch([[0], [1], [2],
-                                          [3], [4], [5],
-                                          [6], [7], [8]], [scale, [0.0], [0.0],
-                                                           [0.0], scale, [0.0],
-                                                           [0.0], [0.0], [1.0]])
-        scale_matrix = tf.reshape(scale_matrix, [3, 3])
-
-        crop_center_float = tf.cast(crop_center, tf.float32)
-        trans1 = crop_center_float[0] * scale - crop_size // 2
-        trans2 = crop_center_float[1] * scale - crop_size // 2
-        trans1 = tf.reshape(trans1, [1, ])
-        trans2 = tf.reshape(trans2, [1, ])
-        trans_matrix = tf.dynamic_stitch([[0], [1], [2],
-                                          [3], [4], [5],
-                                          [6], [7], [8]], [[1.0], [0.0], -trans2,
-                                                           [0.0], [1.0], -trans1,
-                                                           [0.0], [0.0], [1.0]])
-        trans_matrix = tf.reshape(trans_matrix, [3, 3])
+        #
+            # Modify uv21 coordinates
+            crop_center_float = tf.cast(crop_center, tf.float32)
+            keypoint_uv21_u = (keypoint_uv[:, 0] - crop_center_float[1]) * scale + crop_size // 2
+            keypoint_uv21_v = (keypoint_uv[:, 1] - crop_center_float[0]) * scale + crop_size // 2
+            keypoint_uv = tf.stack([keypoint_uv21_u, keypoint_uv21_v], 1)
+        #
 
         # 高斯分布
-        keypoint_uv_heatmap = create_multiple_gaussian_map(keypoint_uv, image_size)
+        keypoint_uv_heatmap = create_multiple_gaussian_map(keypoint_uv, (int(crop_size),int(crop_size)))
         """
         Segmentation masks available:
         左手：2,5,8,11,14
         右手：18,21,24,27,30
         """
-        return image, keypoint_uv, keypoint_uv_heatmap
+        return image_crop, keypoint_uv, keypoint_uv_heatmap
     def ReadTxtName(self, rootdir):
         lines = []
         with open(rootdir, 'r') as file_to_read:
@@ -384,7 +365,10 @@ if __name__ == '__main__':
 
     dataset_CMU = CMU()
     with tf.Session() as sess:
-
+        if os.path.exists('/tmp/image/'):  # 如果文件存在
+            # 删除文件，可使用以下两种方法。
+            shutil.rmtree('/tmp/image/')
+        os.makedirs('/tmp/image/')
         for i in tqdm(range(dataset_CMU.sample_num)):
-            image_crop, keypoint_uv21, keypoint_uv_heatmap = sess.run(dataset_CMU.get_batch_data)
+            image_crop, keypoint_uv21, keypoint_uv_heatmap= sess.run(dataset_CMU.get_batch_data_eval)
             dataset_CMU.visualize_data(image_crop[0], keypoint_uv21[0],keypoint_uv_heatmap[0])

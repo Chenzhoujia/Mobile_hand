@@ -59,7 +59,7 @@ def main(argv=None):
     with tf.Session(config=config) as sess:
         init.run()
         checkpoint_path = './snapshots_posenet'
-        model_name = 'model-30000'
+        model_name = 'model-42'
         if checkpoint_path:
             saver = tf.train.Saver(max_to_keep=10)
             saver.restore(sess, checkpoint_path+'/'+model_name)

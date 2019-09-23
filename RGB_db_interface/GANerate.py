@@ -4,6 +4,7 @@ import pickle
 import os
 
 import numpy as np
+import shutil
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -263,7 +264,7 @@ class GANerate(BaseDataset):
         # 创建训练数据集
         train_num = 140000
 
-        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames[:train_num], self.joint2D[:train_num], self.joint_pos[:train_num]))
+        dataset = tf.data.Dataset.from_tensor_slices((self.imagefilenames, self.joint2D, self.joint_pos))
         dataset = dataset.map(GANerate._parse_function)
         dataset = dataset.repeat()
         dataset = dataset.shuffle(buffer_size=320)
@@ -297,7 +298,7 @@ class GANerate(BaseDataset):
         ax1 = fig.add_subplot(221)
         ax2 = fig.add_subplot(222, projection='3d')
         ax1.imshow(image_crop)
-        #plot_hand(keypoint_uv21, ax1)
+        plot_hand(keypoint_uv21, ax1)
         ax1.scatter(keypoint_uv21[:, 0], keypoint_uv21[:, 1], s=10, c='k', marker='.')
         #ax1.scart(keypoint_uv21[:, 0], keypoint_uv21[:, 1], color=color, linewidth=1)
         plot_hand_3d(keypoint_xyz21_normed, ax2)
@@ -331,6 +332,8 @@ class GANerate(BaseDataset):
         左手：2,5,8,11,14
         右手：18,21,24,27,30
         """
+        keypoint_uv = tf.cast(keypoint_uv,dtype=tf.float32)
+
         return image, keypoint_uv, keypoint_uv_heatmap, keypoint_xyz
     def ReadTxtName(self, rootdir):
         lines = []
@@ -346,7 +349,10 @@ class GANerate(BaseDataset):
 if __name__ == '__main__':
     dataset_GANerate = GANerate()
     with tf.Session() as sess:
-
+        if os.path.exists('/tmp/image/'):  # 如果文件存在
+            # 删除文件，可使用以下两种方法。
+            shutil.rmtree('/tmp/image/')
+        os.makedirs('/tmp/image/')
         for i in tqdm(range(dataset_GANerate.sample_num)):
             image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed = sess.run(dataset_GANerate.get_batch_data_eval)
             dataset_GANerate.visualize_data(image_crop[0], keypoint_uv21[0],keypoint_uv_heatmap[0], keypoint_xyz21_normed[0])

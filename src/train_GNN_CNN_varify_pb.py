@@ -5,7 +5,6 @@ import numpy as np
 from numpy import unravel_index
 from tqdm import tqdm
 import scipy.misc
-import numpy as np
 import matplotlib.pyplot as plt
 from RGB_db_interface.GANerate import plot_hand
 
@@ -57,10 +56,10 @@ if __name__ == '__main__':
             #frame = cv2.imread('/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/GANeratedHands_Release/data/noObject/0001/'
             #                   + str(step).zfill(4) + '_color_composed.png')
             #frame = cv2.imread('/home/chen/Documents/Mobile_hand/src/snapshots_posenet/baseline/real/' + str(step) + '.jpg')
-            frame = cv2.imread('/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/ICCV2017/RHD_published_v2/evaluation/color/' + str(step) + '.jpg')
+            #frame = cv2.imread('/media/chen/4CBEA7F1BEA7D1AE/Download/hand_dataset/ICCV2017/RHD_published_v2/evaluation/color/' + str(step) + '.jpg')
 
-            # ret, frame = cap.read()
-            # frame = frame[240 - 128:240 + 128, 320 - 128:320 + 128, :]
+            ret, frame = cap.read()
+            frame = frame[240 - 128:240 + 128, 320 - 128:320 + 128, :]
 
             frame = frame[:,:, [2, 1, 0]]
             frame = frame.astype(np.float)

@@ -21,11 +21,14 @@ import tensorflow as tf
 import os
 import sys
 import time
+
+from RGB_db_interface.CMU3 import CMU
 from nets.ColorHandPose3DNetwork import ColorHandPose3DNetwork
 from tqdm import tqdm
 from utils.general import LearningRateScheduler, load_weights_from_snapshot
 
 from RGB_db_interface.GANerate import GANerate
+
 from dataset_interface.RHD import RHD
 # training parameters
 
@@ -49,11 +52,16 @@ sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
 tf.train.start_queue_runners(sess=sess)
 
 # get dataset
-dataset_GANerate = GANerate(batchnum=32)
+dataset_GANerate = GANerate(batchnum=4)
 image_crop, keypoint_uv21, keypoint_uv_heatmap, keypoint_xyz21_normed = dataset_GANerate.get_batch_data
-image_crop_eval, keypoint_uv21_eval, keypoint_uv_heatmap_eval, keypoint_xyz21_normed_eval= dataset_GANerate.get_batch_data_eval
 
+dataset_CMU = CMU(batchnum=28)
+image_crop_eval, keypoint_uv21_eval, keypoint_uv_heatmap_eval= dataset_CMU.get_batch_data_eval
+image_crop_real, keypoint_uv21_real, keypoint_uv_heatmap_real= dataset_CMU.get_batch_data
 
+image_crop = tf.concat([image_crop, image_crop_real], 0)
+keypoint_uv21 = tf.concat([keypoint_uv21, keypoint_uv21_eval], 0)
+keypoint_uv_heatmap = tf.concat([keypoint_uv_heatmap, keypoint_uv_heatmap_eval], 0)
 # build network
 evaluation = tf.placeholder_with_default(True, shape=())
 net = ColorHandPose3DNetwork()
@@ -89,10 +97,15 @@ train_op = opt.minimize(loss)
 # init weights
 sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver(max_to_keep=1, keep_checkpoint_every_n_hours=4.0)
+# rename_dict = {'CPM/PoseNet': 'PoseNet2D',
+#                '_CPM': ''}
+# load_weights_from_snapshot(sess, './weights/cpm-model-mpii', ['PersonNet', 'PoseNet/Mconv', 'conv5_2_CPM'], rename_dict)
 
-rename_dict = {'CPM/PoseNet': 'PoseNet2D',
-               '_CPM': ''}
-load_weights_from_snapshot(sess, './weights/cpm-model-mpii', ['PersonNet', 'PoseNet/Mconv', 'conv5_2_CPM'], rename_dict)
+checkpoint_path = './snapshots_posenet'
+model_name = 'model-4'
+if checkpoint_path:
+    saver.restore(sess, checkpoint_path + '/' + model_name)
+    print("restore from " + checkpoint_path + '/' + model_name)
 
 # snapshot dir
 if not os.path.exists(train_para['snapshot_dir']):
@@ -108,7 +121,7 @@ waiting = 0
 now = time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime(time.time()))
 for epoch in range(1, int(140000/32/1000)*100 + 1):
     log_line(train_para['snapshot_dir']+'/train'+now+'.log', "== Epoch %i" % epoch)
-    for one_epoch in tqdm(range(1000)):
+    for one_epoch in tqdm(range(500)):
         _, loss_v = sess.run([train_op, loss])
 
     print("\r\x1b[K", end='')
@@ -122,7 +135,7 @@ for epoch in range(1, int(140000/32/1000)*100 + 1):
     if early_stopping_metric > loss_eval_v:
         early_stopping_metric = loss_eval_v
         waiting = 0
-        saver.save(sess, "%s/model" % train_para['snapshot_dir'], global_step=train_para['max_iter'])
+        saver.save(sess, "%s/model" % train_para['snapshot_dir'], global_step=epoch)
         log_line(train_para['snapshot_dir'] + '/eval' + now + '.log', " save one model")
     else:
         waiting = waiting+1
